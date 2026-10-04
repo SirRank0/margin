@@ -58,11 +58,16 @@ function pairKey(a: number, b: number) {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
-function heroEdge(ids: number[], byId: Map<number, HeroStat>, center: number) {
+function heroEdge(
+  ids: number[],
+  byId: Map<number, HeroStat>,
+  center: number,
+  minMatches: number,
+) {
   let z = 0;
   for (const id of ids) {
     const hero = byId.get(id);
-    if (!hero || hero.matches < 200) continue;
+    if (!hero || hero.matches < minMatches) continue;
     z += logit(winRate(hero.wins, hero.matches)) - logit(center);
   }
   return z;
@@ -72,6 +77,7 @@ function pairEdge(
   ids: number[],
   byId: Map<number, HeroStat>,
   pairs: Map<string, PairStat>,
+  minMatches: number,
 ) {
   let z = 0;
   for (let i = 0; i < ids.length; i++) {
@@ -79,8 +85,8 @@ function pairEdge(
       const pair = pairs.get(pairKey(ids[i], ids[j]));
       const left = byId.get(ids[i]);
       const right = byId.get(ids[j]);
-      if (!pair || pair.matches < 400 || !left || !right) continue;
-      if (left.matches < 200 || right.matches < 200) continue;
+      if (!pair || pair.matches < minMatches || !left || !right) continue;
+      if (left.matches < minMatches || right.matches < minMatches) continue;
       const expected =
         (winRate(left.wins, left.matches) + winRate(right.wins, right.matches)) / 2;
       const residual = winRate(pair.wins, pair.matches) - expected;
@@ -106,7 +112,10 @@ export function scoreLobby(
   theirs: number[],
   yourItems: number[],
   theirItems: number[],
+  mins: { heroMin?: number; pairMin?: number } = {},
 ): Score {
+  const heroMin = mins.heroMin ?? 200;
+  const pairMin = mins.pairMin ?? 400;
   const heroes = new Map(meta.heroes.map((hero) => [hero.id, hero]));
   const pairs = new Map(meta.pairs.map((pair) => [pairKey(pair.a, pair.b), pair]));
   const items = new Map(meta.items.map((item) => [item.id, item]));
@@ -120,10 +129,8 @@ export function scoreLobby(
   );
   const center = winRate(weighted.wins, weighted.matches);
 
-  const heroesZ =
-    heroEdge(yours, heroes, center) - heroEdge(theirs, heroes, center);
-  const pairsZ =
-    pairEdge(yours, heroes, pairs) - pairEdge(theirs, heroes, pairs);
+  const heroesZ = heroEdge(yours, heroes, center, heroMin) - heroEdge(theirs, heroes, center, heroMin);
+  const pairsZ = pairEdge(yours, heroes, pairs, pairMin) - pairEdge(theirs, heroes, pairs, pairMin);
   const itemsZ =
     itemEdge(yourItems, items) - itemEdge(theirItems, items);
 
