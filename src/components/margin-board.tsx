@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
-import { scoreLobby, winRate, type MarginMeta } from "@/lib/odds";
+import { scoreLobby, winRate } from "@/lib/odds";
+import { rankSlices } from "@/data/margin-ranks";
 
 const SEATS = 6;
 
@@ -22,7 +23,10 @@ function monogram(name: string) {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-export function MarginBoard({ meta }: { meta: MarginMeta }) {
+export function MarginBoard() {
+  const [rankId, setRankId] = useState(rankSlices[0].id);
+  const slice = rankSlices.find((row) => row.id === rankId) ?? rankSlices[0];
+  const meta = slice.meta;
   const [yours, setYours] = useState<number[]>([]);
   const [theirs, setTheirs] = useState<number[]>([]);
   const [yourItems, setYourItems] = useState<number[]>([]);
@@ -33,8 +37,12 @@ export function MarginBoard({ meta }: { meta: MarginMeta }) {
   const byId = useMemo(() => new Map(meta.heroes.map((hero) => [hero.id, hero])), [meta.heroes]);
   const taken = useMemo(() => new Set([...yours, ...theirs]), [yours, theirs]);
   const score = useMemo(
-    () => scoreLobby(meta, yours, theirs, yourItems, theirItems),
-    [meta, yours, theirs, yourItems, theirItems],
+    () =>
+      scoreLobby(meta, yours, theirs, yourItems, theirItems, {
+        heroMin: slice.heroMin,
+        pairMin: slice.pairMin,
+      }),
+    [meta, yours, theirs, yourItems, theirItems, slice.heroMin, slice.pairMin],
   );
 
   const shown = meta.heroes.filter((hero) =>
@@ -93,26 +101,42 @@ export function MarginBoard({ meta }: { meta: MarginMeta }) {
           <h1 className="mt-1 font-display text-4xl text-fg sm:text-5xl">Comp odds</h1>
           <p className="mt-2 text-pretty text-muted">
             Pick both lineups. The chance is how far those heroes, their pairs, and a few items
-            sit from the public-match average. It is not a ban solver.
+            sit from the average in the rank you choose. It is not a ban solver.
           </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={swap}
-            className="inline-flex min-h-11 items-center gap-2 rounded-card border border-line bg-surface px-3 text-sm text-fg"
-          >
-            <ArrowLeftRight className="size-4" aria-hidden />
-            Swap
-          </button>
-          <button
-            type="button"
-            onClick={clear}
-            className="inline-flex min-h-11 items-center gap-2 rounded-card border border-line bg-surface px-3 text-sm text-fg"
-          >
-            <RotateCcw className="size-4" aria-hidden />
-            Clear
-          </button>
+        <div className="flex flex-col gap-2 sm:items-end">
+          <label className="flex flex-col gap-1 text-sm text-muted">
+            Rank
+            <select
+              value={rankId}
+              onChange={(event) => setRankId(event.target.value)}
+              className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
+            >
+              {rankSlices.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={swap}
+              className="inline-flex min-h-11 items-center gap-2 rounded-card border border-line bg-surface px-3 text-sm text-fg"
+            >
+              <ArrowLeftRight className="size-4" aria-hidden />
+              Swap
+            </button>
+            <button
+              type="button"
+              onClick={clear}
+              className="inline-flex min-h-11 items-center gap-2 rounded-card border border-line bg-surface px-3 text-sm text-fg"
+            >
+              <RotateCcw className="size-4" aria-hidden />
+              Clear
+            </button>
+          </div>
         </div>
       </header>
 
@@ -132,7 +156,11 @@ export function MarginBoard({ meta }: { meta: MarginMeta }) {
           </p>
         </div>
         <p className="mt-3 text-sm text-pretty text-muted">
-          Empty seats count as an average hero. Fill both sides before reading the chance as a match.
+          {slice.label} is the last 30 days of public matches
+          {slice.id === "all"
+            ? ", every rank mixed together."
+            : " where both teams averaged that badge."}{" "}
+          Empty seats count as an average hero.
         </p>
         <div className="mt-4 h-3 overflow-hidden rounded-full bg-enemy">
           <div
@@ -180,8 +208,8 @@ export function MarginBoard({ meta }: { meta: MarginMeta }) {
             <h2 className="font-display text-2xl text-fg">Heroes</h2>
             <p className="text-sm text-muted">
               Adding to {side === "yours" ? "your side" : "their side"}
-              {side === "yours" && yoursFull ? " — that side is full" : ""}
-              {side === "theirs" && theirs.length >= SEATS ? " — that side is full" : ""}
+              {side === "yours" && yoursFull ? " \u2014 that side is full" : ""}
+              {side === "theirs" && theirs.length >= SEATS ? " \u2014 that side is full" : ""}
             </p>
           </div>
           <label className="flex min-h-11 items-center gap-2 rounded-card border border-line bg-bg px-3 sm:w-64">
@@ -212,7 +240,7 @@ export function MarginBoard({ meta }: { meta: MarginMeta }) {
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-fg">{hero.name}</span>
                   <span className="block tabular-nums text-sm text-muted">
-                    {pct(rate)} · {compact(hero.matches)}
+                    {pct(rate)} \u00b7 {compact(hero.matches)}
                   </span>
                 </span>
               </button>
@@ -238,9 +266,7 @@ export function MarginBoard({ meta }: { meta: MarginMeta }) {
                 type="button"
                 onClick={() => toggleItem(item.id)}
                 className={`min-h-11 rounded-full border px-3 text-sm ${
-                  on
-                    ? "border-amber bg-amber text-ink"
-                    : "border-line bg-raised text-fg"
+                  on ? "border-amber bg-amber text-ink" : "border-line bg-raised text-fg"
                 }`}
               >
                 {item.name}
