@@ -14,6 +14,7 @@ from pathlib import Path
 API = "https://api.deadlock-api.com"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "margin-ranks.ts"
 
+# The board's item chips. Names come from the previous snapshot.
 ITEMS = {
     2922054143: "Rusted Barrel",
     2108215830: "Heroic Aura",
@@ -52,15 +53,12 @@ def get(path, params=None):
         return json.load(resp)
 
 
-def floors(hero_matches):
-    if hero_matches >= 2_000_000:
-        return 200, 400
-    if hero_matches >= 300_000:
-        return 80, 120
-    return 40, 30
+# Pairs below this are too thin for a binomial logit. Shrinkage, not a
+# higher cutoff, decides how much a recorded pair is allowed to matter.
+PAIR_MIN = 30
 
 
-def slice_meta(heroes, pairs, items, names):
+def slice_meta(heroes, pairs, items, names, counters=None):
     hero_rows = []
     for row in heroes:
         name = names.get(row["hero_id"])
@@ -75,17 +73,32 @@ def slice_meta(heroes, pairs, items, names):
             }
         )
     hero_rows.sort(key=lambda hero: hero["matches"], reverse=True)
-    total = sum(hero["matches"] for hero in hero_rows)
-    hero_min, pair_min = floors(total)
     pair_rows = []
     for row in pairs:
         matches = row["matches_played"]
-        if matches < pair_min:
+        if matches < PAIR_MIN:
             continue
         pair_rows.append(
             {
                 "a": row["hero_id1"],
                 "b": row["hero_id2"],
+                "wins": row["wins"],
+                "matches": matches,
+            }
+        )
+    counter_rows = []
+    for row in counters or []:
+        matches = row["matches_played"]
+        hero_id = row["hero_id"]
+        enemy_id = row["enemy_hero_id"]
+        if matches < PAIR_MIN or hero_id == enemy_id:
+            continue
+        if hero_id not in names or enemy_id not in names:
+            continue
+        counter_rows.append(
+            {
+                "hero": hero_id,
+                "enemy": enemy_id,
                 "wins": row["wins"],
                 "matches": matches,
             }
@@ -103,13 +116,14 @@ def slice_meta(heroes, pairs, items, names):
                 "matches": row["matches"],
             }
         )
-    item_rows.sort(key=lambda item: list(ITEMS).index(item["id"]))
+    item_rows.sort(key=lambda item: ITEMS and list(ITEMS).index(item["id"]))
     return {
-        "heroMin": hero_min,
-        "pairMin": pair_min,
+        "heroMin": 0,
+        "pairMin": PAIR_MIN,
         "meta": {
             "heroes": hero_rows,
             "pairs": pair_rows,
+            "counters": counter_rows,
             "items": item_rows,
             "fetchedAt": datetime.now(timezone.utc).isoformat(),
         },
@@ -135,10 +149,15 @@ def main():
         ident, label, params = band
         heroes = get("/v1/analytics/hero-stats", params)
         pairs = get("/v1/analytics/hero-synergy-stats", params)
+        counters = get("/v1/analytics/hero-counter-stats", {**(params or {}), "min_matches": PAIR_MIN})
         items = get("/v1/analytics/item-stats", params)
-        built = slice_meta(heroes, pairs, items, names)
+        built = slice_meta(heroes, pairs, items, names, counters)
         built["id"] = ident
         built["label"] = label
+        print(
+            f"{label:12} heroes {len(built['meta']['heroes']):2} "
+            f"pairs {len(built['meta']['pairs']):4}"
+        )
         return built
 
     with ThreadPoolExecutor(4) as pool:
@@ -157,6 +176,7 @@ def main():
         "};\n\n"
         f"export const rankSlices: RankSlice[] = {payload};\n"
     )
+    print("wrote", OUT, "bytes", OUT.stat().st_size)
 
 
 if __name__ == "__main__":

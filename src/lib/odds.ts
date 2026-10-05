@@ -19,9 +19,18 @@ export type ItemStat = {
   matches: number;
 };
 
+export type CounterStat = {
+  hero: number;
+  enemy: number;
+  wins: number;
+  matches: number;
+};
+
 export type MarginMeta = {
   heroes: HeroStat[];
   pairs: PairStat[];
+  /** Directed: hero's team win rate when enemy is on the other team. */
+  counters?: CounterStat[];
   items: ItemStat[];
   fetchedAt: string;
 };
@@ -32,11 +41,34 @@ export type ScoreStep = {
   probability: number;
 };
 
+export type ScorePart = {
+  kind: "hero" | "pair" | "counter";
+  /** Whose record this is. A counter is always from your side's point of view. */
+  side: "yours" | "theirs";
+  label: string;
+  /** Log-odds added to your chance. Positive helps your side. */
+  logOdds: number;
+  /** How far your chance moves if this one line is removed. */
+  marginal: number;
+  matches: number;
+  /** This record's own win rate. */
+  observed: number;
+  /** What the strengths already counted predict, before this line. */
+  predicted: number;
+  /**
+   * Shrunk gap in log-odds, from the record's own point of view.
+   * For a pair, positive means they win more together than their own rates.
+   * For a hero, this is that hero's strength.
+   */
+  leftover: number;
+};
+
 export type Score = {
   probability: number;
   low: number;
   high: number;
   steps: ScoreStep[];
+  parts: ScorePart[];
 };
 
 export function winRate(wins: number, matches: number) {
@@ -56,12 +88,17 @@ export function sigmoid(z: number) {
 type Obs = { y: number; v: number };
 type Post = { mean: number; variance: number };
 
+/**
+ * Haldane-Anscombe logit. Adding 1/2 win and 1/2 loss keeps a 0% or 100%
+ * record finite, and it barely moves a record with thousands of matches.
+ */
 function adjustedLogit(wins: number, matches: number) {
   const n = matches + 1;
   const p = (wins + 0.5) / n;
   return { y: logit(p), v: 1 / (n * p * (1 - p)) };
 }
 
+/** Paule-Mandel random-effects estimate. tau2 = 0 means the spread is noise. */
 function pauleMandel(obs: Obs[]): { mu: number; tau2: number } {
   const k = obs.length;
   if (k === 0) return { mu: 0, tau2: 0 };
@@ -104,6 +141,7 @@ function shrink(y: number, v: number, mu: number, tau2: number): Post {
   return { mean: (y / v + mu / tau2) / precision, variance: 1 / precision };
 }
 
+/** Wilson score interval for a binomial win rate. */
 export function wilson(wins: number, matches: number, z = 1.96) {
   if (matches <= 0) return { p: 0.5, low: 0, high: 1 };
   const p = wins / matches;
@@ -123,6 +161,20 @@ function pairKey(a: number, b: number) {
   return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
+/**
+ * Bradley-Terry win chance with partial pooling.
+ *
+ * A hero's strength is the log-odds of its win rate, shrunk toward the
+ * field by a Paule-Mandel random-effects model. An empty seat is an average
+ * hero, so its strength is zero. A same-team pair contributes only the
+ * leftover log-odds after the two hero strengths. A counter contributes only
+ * the leftover after the ally's strength and the enemy's strength. Both
+ * leftovers are shrunk toward a typical record. Items are not in the chance:
+ * purchase is confounded with already being ahead.
+ *
+ * The interval treats each record as an independent binomial sample. Real
+ * matches sit inside several records at once, so the interval is too narrow.
+ */
 export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]): Score {
   const heroes = new Map(meta.heroes.map((hero) => [hero.id, hero]));
   const total = meta.heroes.reduce(
@@ -149,20 +201,73 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
 
   const pairObs: Obs[] = [];
   const pairIndex: { key: string; y: number; v: number }[] = [];
+  const pairRecord = new Map<string, { observed: number; predicted: number; matches: number }>();
   for (const pair of meta.pairs) {
-    const left = heroObs.get(pair.a);
-    const right = heroObs.get(pair.b);
+    const left = heroPost.get(pair.a);
+    const right = heroPost.get(pair.b);
     if (!left || !right || pair.matches <= 0) continue;
     const fit = adjustedLogit(pair.wins, pair.matches);
-    const y = fit.y - center - left.y - right.y;
+    // The two strengths are already in the sum. The leftover is only the gap.
+    const y = fit.y - center - left.mean - right.mean;
+    const key = pairKey(pair.a, pair.b);
     pairObs.push({ y, v: fit.v });
-    pairIndex.push({ key: pairKey(pair.a, pair.b), y, v: fit.v });
+    pairIndex.push({ key, y, v: fit.v });
+    pairRecord.set(key, {
+      observed: winRate(pair.wins, pair.matches),
+      predicted: sigmoid(center + left.mean + right.mean),
+      matches: pair.matches,
+    });
   }
   const pairPool = pauleMandel(pairObs);
   const pairPost = new Map<string, Post>();
   for (const pair of pairIndex) {
     const post = shrink(pair.y, pair.v, pairPool.mu, pairPool.tau2);
     pairPost.set(pair.key, { mean: post.mean - pairPool.mu, variance: post.variance });
+  }
+
+  // Other ten seats are treated as the field, so a matchup's expected
+  // log-odds is this hero's strength minus that enemy's strength.
+  const counterObs: Obs[] = [];
+  const counterIndex: { key: string; y: number; v: number }[] = [];
+  const counterRecord = new Map<string, { observed: number; predicted: number; matches: number }>();
+  for (const row of meta.counters ?? []) {
+    const ally = heroPost.get(row.hero);
+    const enemy = heroPost.get(row.enemy);
+    if (!ally || !enemy || row.matches <= 0 || row.hero === row.enemy) continue;
+    const fit = adjustedLogit(row.wins, row.matches);
+    const y = fit.y - center - ally.mean + enemy.mean;
+    const key = `${row.hero}>${row.enemy}`;
+    counterObs.push({ y, v: fit.v });
+    counterIndex.push({ key, y, v: fit.v });
+    counterRecord.set(key, {
+      observed: winRate(row.wins, row.matches),
+      predicted: sigmoid(center + ally.mean - enemy.mean),
+      matches: row.matches,
+    });
+  }
+  const counterPool = pauleMandel(counterObs);
+  const directed = new Map<string, Post>();
+  for (const row of counterIndex) {
+    const post = shrink(row.y, row.v, counterPool.mu, counterPool.tau2);
+    directed.set(row.key, { mean: post.mean - counterPool.mu, variance: post.variance });
+  }
+  // A matchup and its reverse are the same games. Keep only the antisymmetric part
+  // so swapping the two lineups complements the chance.
+  const counterPost = new Map<string, Post>();
+  for (const [key, post] of directed) {
+    if (counterPost.has(key)) continue;
+    const [hero, enemy] = key.split(">");
+    const reverseKey = `${enemy}>${hero}`;
+    const reverse = directed.get(reverseKey);
+    if (!reverse) {
+      counterPost.set(key, post);
+      counterPost.set(reverseKey, { mean: -post.mean, variance: post.variance });
+      continue;
+    }
+    const mean = (post.mean - reverse.mean) / 2;
+    const variance = (post.variance + reverse.variance) / 4;
+    counterPost.set(key, { mean, variance });
+    counterPost.set(reverseKey, { mean: -mean, variance });
   }
 
   const side = (ids: number[], withPairs: boolean) => {
@@ -193,9 +298,98 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
   const yourFull = side(yours, true);
   const theirFull = side(theirs, true);
   const heroLogOdds = yourHeroes.z - theirHeroes.z;
-  const logOdds = yourFull.z - theirFull.z;
-  const se = Math.sqrt(yourFull.v + theirFull.v);
+  const pairLogOdds = yourFull.z - theirFull.z;
+  let counterLogOdds = 0;
+  let counterVariance = 0;
+  const allies = [...new Set(yours)].filter((id) => heroes.has(id));
+  const enemies = [...new Set(theirs)].filter((id) => heroes.has(id));
+  for (const ally of allies) {
+    for (const enemy of enemies) {
+      const post = counterPost.get(`${ally}>${enemy}`);
+      if (!post) continue;
+      counterLogOdds += post.mean;
+      counterVariance += post.variance;
+    }
+  }
+  const logOdds = pairLogOdds + counterLogOdds;
+  const se = Math.sqrt(yourFull.v + theirFull.v + counterVariance);
   const probability = sigmoid(logOdds);
+  const name = (id: number) => heroes.get(id)?.name ?? String(id);
+  const draft: Omit<ScorePart, "marginal">[] = [];
+  for (const id of allies) {
+    const post = heroPost.get(id);
+    const hero = heroes.get(id);
+    if (!post || !hero) continue;
+    draft.push({
+      kind: "hero",
+      side: "yours",
+      label: hero.name,
+      logOdds: post.mean,
+      matches: hero.matches,
+      observed: winRate(hero.wins, hero.matches),
+      predicted: sigmoid(center),
+      leftover: post.mean,
+    });
+  }
+  for (const id of enemies) {
+    const post = heroPost.get(id);
+    const hero = heroes.get(id);
+    if (!post || !hero) continue;
+    draft.push({
+      kind: "hero",
+      side: "theirs",
+      label: hero.name,
+      logOdds: -post.mean,
+      matches: hero.matches,
+      observed: winRate(hero.wins, hero.matches),
+      predicted: sigmoid(center),
+      leftover: post.mean,
+    });
+  }
+  const pushPairs = (ids: number[], sign: number, owner: "yours" | "theirs") => {
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const key = pairKey(ids[i], ids[j]);
+        const post = pairPost.get(key);
+        const record = pairRecord.get(key);
+        if (!post || !record) continue;
+        draft.push({
+          kind: "pair",
+          side: owner,
+          label: `${name(ids[i])} + ${name(ids[j])}`,
+          logOdds: sign * post.mean,
+          matches: record.matches,
+          observed: record.observed,
+          predicted: record.predicted,
+          leftover: post.mean,
+        });
+      }
+    }
+  };
+  pushPairs(allies, 1, "yours");
+  pushPairs(enemies, -1, "theirs");
+  for (const ally of allies) {
+    for (const enemy of enemies) {
+      const key = `${ally}>${enemy}`;
+      const post = counterPost.get(key);
+      const record = counterRecord.get(key) ?? counterRecord.get(`${enemy}>${ally}`);
+      if (!post || !record) continue;
+      draft.push({
+        kind: "counter",
+        side: "yours",
+        label: `${name(ally)} vs ${name(enemy)}`,
+        logOdds: post.mean,
+        matches: record.matches,
+        observed: counterRecord.get(key)?.observed ?? 1 - record.observed,
+        predicted: counterRecord.get(key)?.predicted ?? 1 - record.predicted,
+        leftover: post.mean,
+      });
+    }
+  }
+  const parts: ScorePart[] = draft.map((part) => ({
+    ...part,
+    marginal: probability - sigmoid(logOdds - part.logOdds),
+  }));
 
   const steps: ScoreStep[] = [
     {
@@ -204,15 +398,21 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
       probability: sigmoid(0),
     },
     {
-      label: "Shrunk hero strengths",
+      label: "Hero win rates",
       detail:
-        "Each strength is the hero's log-odds win rate, pulled toward the field in proportion to how thin its sample is.",
+        "Each picked hero adds its own win rate, on a log-odds scale, pulled toward the field when that hero's sample is thin. Their heroes are subtracted.",
       probability: sigmoid(heroLogOdds),
     },
     {
-      label: "Leftover pair effects",
+      label: "Same-team leftovers",
       detail:
-        "A pair adds only the log-odds left after the two hero strengths. Typical pairs are pulled to zero.",
+        "Two allies add only what is left after both of their own rates. More than expected is synergy. Less is anti-synergy. Their pairs are subtracted.",
+      probability: sigmoid(pairLogOdds),
+    },
+    {
+      label: "Matchup leftovers",
+      detail:
+        "Each of your heroes against each of theirs adds only what is left after both strengths. A usual matchup adds nothing.",
       probability,
     },
   ];
@@ -222,5 +422,6 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
     low: sigmoid(logOdds - 1.96 * se),
     high: sigmoid(logOdds + 1.96 * se),
     steps,
+    parts,
   };
 }
