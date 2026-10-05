@@ -2,10 +2,17 @@ import { useMemo, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
 import { rankSlices } from "@/data/margin-ranks";
+import { laneMatchups } from "@/data/margin-lanes";
 
 const SEATS = 6;
+const LANE_NAMES = ["York", "Broadway", "Greenwich"] as const;
 
 type Side = "yours" | "theirs";
+type LaneSlots = { yours: number[]; theirs: number[] };
+
+function emptyLanes(): LaneSlots[] {
+  return LANE_NAMES.map(() => ({ yours: [], theirs: [] }));
+}
 
 function pct(value: number) {
   return `${Math.round(value * 1000) / 10}%`;
@@ -29,14 +36,16 @@ export function MarginBoard() {
   const meta = slice.meta;
   const [yours, setYours] = useState<number[]>([]);
   const [theirs, setTheirs] = useState<number[]>([]);
+  const [lanes, setLanes] = useState<LaneSlots[]>(emptyLanes);
   const [side, setSide] = useState<Side>("yours");
   const [query, setQuery] = useState("");
 
   const byId = useMemo(() => new Map(meta.heroes.map((hero) => [hero.id, hero])), [meta.heroes]);
   const taken = useMemo(() => new Set([...yours, ...theirs]), [yours, theirs]);
+  const scored = useMemo(() => ({ ...meta, lanes: laneMatchups }), [meta]);
   const score = useMemo(
-    () => scoreLobby(meta, yours, theirs),
-    [meta, yours, theirs],
+    () => scoreLobby(scored, yours, theirs, lanes),
+    [scored, yours, theirs, lanes],
   );
 
   const shown = meta.heroes.filter((hero) =>
@@ -56,17 +65,44 @@ export function MarginBoard() {
   function removeHero(which: Side, id: number) {
     const setList = which === "yours" ? setYours : setTheirs;
     setList((current) => current.filter((hero) => hero !== id));
+    setLanes((current) =>
+      current.map((lane) => ({
+        yours: lane.yours.filter((hero) => hero !== id),
+        theirs: lane.theirs.filter((hero) => hero !== id),
+      })),
+    );
   }
 
   function clear() {
     setYours([]);
     setTheirs([]);
+    setLanes(emptyLanes());
     setSide("yours");
   }
 
   function swap() {
     setYours(theirs);
     setTheirs(yours);
+    setLanes((current) => current.map((lane) => ({ yours: lane.theirs, theirs: lane.yours })));
+  }
+
+  function assignLane(index: number, which: Side, id: number) {
+    if (!id) return;
+    const removing = id < 0;
+    const heroId = Math.abs(id);
+    setLanes((current) =>
+      current.map((lane, laneIndex) => {
+        const next = {
+          yours: lane.yours.filter((hero) => hero !== heroId),
+          theirs: lane.theirs.filter((hero) => hero !== heroId),
+        };
+        if (removing || laneIndex !== index) return next;
+        const list = which === "yours" ? next.yours : next.theirs;
+        if (list.length >= 2) return next;
+        list.push(heroId);
+        return next;
+      }),
+    );
   }
 
   const yoursFull = yours.length >= SEATS;
@@ -169,6 +205,14 @@ export function MarginBoard() {
         />
       </div>
 
+      <LaneBoard
+        lanes={lanes}
+        yours={yours}
+        theirs={theirs}
+        byId={byId}
+        onAssign={assignLane}
+      />
+
       <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -244,7 +288,92 @@ export function MarginBoard() {
   );
 }
 
+function LaneBoard({
+  lanes,
+  yours,
+  theirs,
+  byId,
+  onAssign,
+}: {
+  lanes: LaneSlots[];
+  yours: number[];
+  theirs: number[];
+  byId: Map<number, { id: number; name: string }>;
+  onAssign: (index: number, which: Side, id: number) => void;
+}) {
+  return (
+    <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
+      <h2 className="font-display text-2xl text-fg">Lanes</h2>
+      <p className="mt-1 max-w-2xl text-pretty text-sm text-muted">
+        Put the two who shared a street on the left, and the two they laned into on the right.
+        The chance uses only the gap left after their rates. A hero in no street is not a lane term.
+      </p>
+      <div className="mt-4 grid gap-3">
+        {LANE_NAMES.map((name, index) => (
+          <div key={name} className="grid gap-2 sm:grid-cols-[7rem_1fr_1fr] sm:items-center">
+            <p className="text-sm font-medium text-amber">{name}</p>
+            <LaneSelect
+              label="Yours"
+              ids={yours}
+              value={lanes[index].yours}
+              byId={byId}
+              onChange={(id) => onAssign(index, "yours", id)}
+            />
+            <LaneSelect
+              label="Theirs"
+              ids={theirs}
+              value={lanes[index].theirs}
+              byId={byId}
+              onChange={(id) => onAssign(index, "theirs", id)}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LaneSelect({
+  label,
+  ids,
+  value,
+  byId,
+  onChange,
+}: {
+  label: string;
+  ids: number[];
+  value: number[];
+  byId: Map<number, { id: number; name: string }>;
+  onChange: (id: number) => void;
+}) {
+  return (
+    <label className="grid gap-1 text-sm text-muted">
+      {label}
+      <select
+        value=""
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
+      >
+        <option value="">{value.length ? value.map((id) => byId.get(id)?.name ?? id).join(" + ") : "Add a hero"}</option>
+        {value.map((id) => (
+          <option key={`out-${id}`} value={-id}>
+            Remove {byId.get(id)?.name ?? id}
+          </option>
+        ))}
+        {ids
+          .filter((id) => !value.includes(id))
+          .map((id) => (
+            <option key={id} value={id}>
+              {byId.get(id)?.name ?? id}
+            </option>
+          ))}
+      </select>
+    </label>
+  );
+}
+
 function Ledger({ score }: { score: Score }) {
+
   const heroes = score.parts.filter((part) => part.kind === "hero");
   const pairs = score.parts.filter((part) => part.kind === "pair");
   const counters = score.parts
@@ -279,8 +408,13 @@ function Ledger({ score }: { score: Score }) {
           say="Only the gap after both strengths. A usual matchup is pulled to zero."
         />
         <MethodRow
+          who="Lane"
+          math="λ = logit(duo vs duo) − θs − r − d"
+          say="Only the gap after both duos' rates, their together-gaps, and the four one-versus-one gaps. York, Broadway, and Greenwich are pooled. A solo lane is not in the table."
+        />
+        <MethodRow
           who="Chance"
-          math="σ( Σθyou + Σryou − Σθthem − Σrthem + Σd )"
+          math="σ( Σθyou + Σryou − Σθthem − Σrthem + Σd + Σλ )"
           say="The sum is on a log-odds scale, then turned back into a chance. The point shifts share that curve, so they do not add up to the gap from 50%."
         />
       </ol>
@@ -305,6 +439,11 @@ function Ledger({ score }: { score: Score }) {
                 ? `${hiddenCounters} other matchups were within 0.3 points of what the two strengths already predict, so they add nothing.`
                 : undefined
             }
+          />
+          <TermGroup
+            title="Lanes"
+            parts={score.parts.filter((part) => part.kind === "lane")}
+            empty="Put two of yours and two of theirs in the same street to see a lane."
           />
         </div>
       )}
@@ -387,6 +526,22 @@ function readPart(part: ScorePart) {
       who: yours ? "Your pair" : "Their pair",
       math: `together ${pct(part.observed)} − predicted ${pct(part.predicted)} = ${signedPoints(gap)}`,
       say: pairSay(part, yours),
+    };
+  }
+  if (part.kind === "lane") {
+    if (part.matches <= 0) {
+      return {
+        who: "Lane",
+        math: "no duo-versus-duo sample of 80",
+        say: "This street is not in the table, so it adds nothing. Solo lanes are excluded.",
+      };
+    }
+    return {
+      who: "Lane",
+      math: `lane ${pct(part.observed)} − predicted ${pct(part.predicted)} = ${signedPoints(gap)}`,
+      say: Math.abs(part.leftover) < 0.005
+        ? `Match win rate when these four shared a street, ${compact(part.matches)} lanes. The gap after the rates already counted is inside the noise of this table, so it is not added.`
+        : `Match win rate when these four shared a street, over ${compact(part.matches)} lanes, minus the strengths, together-gaps, and one-versus-one gaps already counted. Shrinkage keeps ${signedLog(part.leftover)} log-odds.`,
     };
   }
   return {

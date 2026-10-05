@@ -6,8 +6,9 @@ function meta(
   heroes: MarginMeta["heroes"],
   pairs: MarginMeta["pairs"] = [],
   counters: NonNullable<MarginMeta["counters"]> = [],
+  lanes: MarginMeta["lanes"] = [],
 ): MarginMeta {
-  return { heroes, pairs, counters, items: [], fetchedAt: "2026-10-04T00:00:00.000Z" };
+  return { heroes, pairs, counters, lanes, items: [], fetchedAt: "2026-10-04T00:00:00.000Z" };
 }
 
 test("an empty lobby is one half, with no sampling width", () => {
@@ -158,4 +159,31 @@ test("Wilson interval covers the point and shrinks as matches grow", () => {
   const thick = wilson(6000, 10000);
   assert.ok(thin.low < thin.p && thin.p < thin.high);
   assert.ok(thick.high - thick.low < thin.high - thin.low);
+});
+
+test("a duo lane above the four strengths keeps a positive leftover", () => {
+  const heroes = [
+    { id: 1, name: "A", wins: 5000, matches: 10000 },
+    { id: 2, name: "B", wins: 5000, matches: 10000 },
+    { id: 3, name: "C", wins: 5000, matches: 10000 },
+    { id: 4, name: "D", wins: 5000, matches: 10000 },
+  ];
+  const lanes = [
+    { a: 1, b: 2, c: 3, d: 4, wins: 7000, matches: 10000 },
+    { a: 1, b: 3, c: 2, d: 4, wins: 5000, matches: 10000 },
+    { a: 1, b: 4, c: 2, d: 3, wins: 5000, matches: 10000 },
+    { a: 2, b: 3, c: 1, d: 4, wins: 4200, matches: 10000 },
+  ];
+  const score = scoreLobby(meta(heroes, [], [], lanes), [1, 2], [3, 4], [
+    { yours: [1, 2], theirs: [3, 4] },
+  ]);
+  const lane = score.parts.find((part) => part.kind === "lane");
+  assert.ok(lane);
+  assert.ok(lane.observed > lane.predicted + 0.1);
+  assert.ok(lane.leftover > 0);
+  assert.ok(lane.marginal > 0);
+  const flipped = scoreLobby(meta(heroes, [], [], lanes), [3, 4], [1, 2], [
+    { yours: [3, 4], theirs: [1, 2] },
+  ]);
+  assert.ok(Math.abs(score.probability + flipped.probability - 1) < 1e-9);
 });

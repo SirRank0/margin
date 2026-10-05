@@ -13,6 +13,7 @@ from pathlib import Path
 
 API = "https://api.deadlock-api.com"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "margin-ranks.ts"
+LANES = Path(__file__).resolve().parents[1] / "src" / "data" / "margin-lanes.ts"
 
 # The board's item chips. Names come from the previous snapshot.
 ITEMS = {
@@ -177,6 +178,27 @@ def main():
         f"export const rankSlices: RankSlice[] = {payload};\n"
     )
     print("wrote", OUT, "bytes", OUT.stat().st_size)
+    lane_rows = get(
+        "/v1/analytics/lane-matchup-stats",
+        {"min_matches": 80, "group_by": "hero_ids,enemy_hero_ids"},
+    )
+    lanes = []
+    for row in lane_rows:
+        a, b = sorted(int(x) for x in row["hero_ids"])
+        c, d = sorted(int(x) for x in row["enemy_hero_ids"])
+        if a == b or c == d or row["matches_played"] < 80:
+            continue
+        lanes.append(
+            f"  {{a:{a},b:{b},c:{c},d:{d},wins:{int(row['wins'])},matches:{int(row['matches_played'])}}}"
+        )
+    LANES.write_text(
+        'import type { LaneStat } from "@/lib/odds";\n\n'
+        "/** Duo versus duo, all ranks, last 30 days, at least 80 lane matchups. Streets are pooled. Solo lanes are excluded by the source table. */\n"
+        "export const laneMatchups: LaneStat[] = [\n"
+        + ",\n".join(lanes)
+        + "\n];\n"
+    )
+    print("wrote", LANES, "rows", len(lanes))
 
 
 if __name__ == "__main__":

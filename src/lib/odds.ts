@@ -26,11 +26,28 @@ export type CounterStat = {
   matches: number;
 };
 
+/** Duo versus the duo they shared a lane with. a < b and c < d. */
+export type LaneStat = {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  wins: number;
+  matches: number;
+};
+
+export type LaneAssignment = {
+  yours: number[];
+  theirs: number[];
+};
+
 export type MarginMeta = {
   heroes: HeroStat[];
   pairs: PairStat[];
   /** Directed: hero's team win rate when enemy is on the other team. */
   counters?: CounterStat[];
+  /** Duo-versus-duo lane records. Streets are pooled. */
+  lanes?: LaneStat[];
   items: ItemStat[];
   fetchedAt: string;
 };
@@ -42,7 +59,7 @@ export type ScoreStep = {
 };
 
 export type ScorePart = {
-  kind: "hero" | "pair" | "counter";
+  kind: "hero" | "pair" | "counter" | "lane";
   /** Whose record this is. A counter is always from your side's point of view. */
   side: "yours" | "theirs";
   label: string;
@@ -175,7 +192,12 @@ function pairKey(a: number, b: number) {
  * The interval treats each record as an independent binomial sample. Real
  * matches sit inside several records at once, so the interval is too narrow.
  */
-export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]): Score {
+export function scoreLobby(
+  meta: MarginMeta,
+  yours: number[],
+  theirs: number[],
+  laneAssignments: LaneAssignment[] = [],
+): Score {
   const heroes = new Map(meta.heroes.map((hero) => [hero.id, hero]));
   const total = meta.heroes.reduce(
     (sum, hero) => {
@@ -270,6 +292,61 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
     counterPost.set(reverseKey, { mean: -mean, variance });
   }
 
+  // A lane record is the match win rate when these four shared a street.
+  // Subtract the strengths, the same-team gaps, and the four one-versus-one gaps
+  // already in the sum. What remains is the duo-versus-duo leftover.
+  const laneKey = (a: number, b: number, c: number, d: number) =>
+    `${pairKey(a, b)}|${pairKey(c, d)}`;
+  const laneObs: Obs[] = [];
+  const laneIndex: { key: string; y: number; v: number }[] = [];
+  const laneRecord = new Map<string, { observed: number; predicted: number; matches: number }>();
+  for (const row of meta.lanes ?? []) {
+    const ta = heroPost.get(row.a);
+    const tb = heroPost.get(row.b);
+    const tc = heroPost.get(row.c);
+    const td = heroPost.get(row.d);
+    if (!ta || !tb || !tc || !td || row.matches <= 0) continue;
+    const fit = adjustedLogit(row.wins, row.matches);
+    const rab = pairPost.get(pairKey(row.a, row.b))?.mean ?? 0;
+    const rcd = pairPost.get(pairKey(row.c, row.d))?.mean ?? 0;
+    let counters = 0;
+    for (const ally of [row.a, row.b]) {
+      for (const enemy of [row.c, row.d]) counters += counterPost.get(`${ally}>${enemy}`)?.mean ?? 0;
+    }
+    const expected = center + ta.mean + tb.mean - tc.mean - td.mean + rab - rcd + counters;
+    const y = fit.y - expected;
+    const key = laneKey(row.a, row.b, row.c, row.d);
+    laneObs.push({ y, v: fit.v });
+    laneIndex.push({ key, y, v: fit.v });
+    laneRecord.set(key, {
+      observed: winRate(row.wins, row.matches),
+      predicted: sigmoid(expected),
+      matches: row.matches,
+    });
+  }
+  const lanePool = pauleMandel(laneObs);
+  const laneDirected = new Map<string, Post>();
+  for (const row of laneIndex) {
+    const post = shrink(row.y, row.v, lanePool.mu, lanePool.tau2);
+    laneDirected.set(row.key, { mean: post.mean - lanePool.mu, variance: post.variance });
+  }
+  const lanePost = new Map<string, Post>();
+  for (const [key, post] of laneDirected) {
+    if (lanePost.has(key)) continue;
+    const [ally, enemy] = key.split("|");
+    const reverseKey = `${enemy}|${ally}`;
+    const reverse = laneDirected.get(reverseKey);
+    if (!reverse) {
+      lanePost.set(key, post);
+      lanePost.set(reverseKey, { mean: -post.mean, variance: post.variance });
+      continue;
+    }
+    const mean = (post.mean - reverse.mean) / 2;
+    const variance = (post.variance + reverse.variance) / 4;
+    lanePost.set(key, { mean, variance });
+    lanePost.set(reverseKey, { mean: -mean, variance });
+  }
+
   const side = (ids: number[], withPairs: boolean) => {
     let z = 0;
     let v = 0;
@@ -311,8 +388,27 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
       counterVariance += post.variance;
     }
   }
-  const logOdds = pairLogOdds + counterLogOdds;
-  const se = Math.sqrt(yourFull.v + theirFull.v + counterVariance);
+  let laneLogOdds = 0;
+  let laneVariance = 0;
+  const laneHits: { key: string; label: string }[] = [];
+  const seenLane = new Set<string>();
+  for (const lane of laneAssignments) {
+    const ys = [...new Set(lane.yours)].filter((id) => allies.includes(id));
+    const ts = [...new Set(lane.theirs)].filter((id) => enemies.includes(id));
+    if (ys.length !== 2 || ts.length !== 2) continue;
+    const key = laneKey(ys[0], ys[1], ts[0], ts[1]);
+    if (seenLane.has(key)) continue;
+    seenLane.add(key);
+    const label = `${[...ys].sort((a, b) => a - b).map((id) => heroes.get(id)?.name ?? id).join(" + ")} vs ${[...ts].sort((a, b) => a - b).map((id) => heroes.get(id)?.name ?? id).join(" + ")}`;
+    laneHits.push({ key, label });
+    const post = lanePost.get(key);
+    if (!post) continue;
+    laneLogOdds += post.mean;
+    laneVariance += post.variance;
+  }
+  const matchupLogOdds = pairLogOdds + counterLogOdds;
+  const logOdds = matchupLogOdds + laneLogOdds;
+  const se = Math.sqrt(yourFull.v + theirFull.v + counterVariance + laneVariance);
   const probability = sigmoid(logOdds);
   const name = (id: number) => heroes.get(id)?.name ?? String(id);
   const draft: Omit<ScorePart, "marginal">[] = [];
@@ -386,6 +482,20 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
       });
     }
   }
+  for (const hit of laneHits) {
+    const post = lanePost.get(hit.key);
+    const record = laneRecord.get(hit.key);
+    draft.push({
+      kind: "lane",
+      side: "yours",
+      label: hit.label,
+      logOdds: post?.mean ?? 0,
+      matches: record?.matches ?? 0,
+      observed: record?.observed ?? 0.5,
+      predicted: record?.predicted ?? 0.5,
+      leftover: post?.mean ?? 0,
+    });
+  }
   const parts: ScorePart[] = draft.map((part) => ({
     ...part,
     marginal: probability - sigmoid(logOdds - part.logOdds),
@@ -413,6 +523,12 @@ export function scoreLobby(meta: MarginMeta, yours: number[], theirs: number[]):
       label: "Matchup leftovers",
       detail:
         "Each of your heroes against each of theirs adds only what is left after both strengths. A usual matchup adds nothing.",
+      probability: sigmoid(matchupLogOdds),
+    },
+    {
+      label: "Lane leftovers",
+      detail:
+        "A duo against the duo they shared a lane with adds only what is left after strengths, same-team gaps, and the four one-versus-one gaps. Solo lanes are not in the table.",
       probability,
     },
   ];
