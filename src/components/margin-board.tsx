@@ -156,6 +156,8 @@ export function MarginBoard() {
         </div>
       </header>
 
+      <MathNotes />
+
       <section className="rounded-card border border-line bg-surface p-4 sm:p-6">
         <div className="flex items-end justify-between gap-4">
           <div>
@@ -371,6 +373,82 @@ function LaneSelect({
           ))}
       </select>
     </label>
+  );
+}
+
+function MathNotes() {
+  return (
+    <details className="rounded-card border border-line bg-surface p-4 sm:p-5">
+      <summary className="cursor-pointer font-display text-2xl text-fg">
+        How to read the math
+      </summary>
+      <div className="mt-4 grid max-w-2xl gap-4 text-sm text-pretty text-muted">
+        <p>
+          <span className="text-fg">The big percentage is your team's chance to win the match.</span>{" "}
+          An empty seat counts as an average hero, so a half-empty draft stays near 50%. It is not
+          a score for one player, and it is not a ban recommendation.
+        </p>
+        <p>
+          <span className="text-fg">Short hero records are pulled toward average.</span> A hero who
+          won 8 of 10 looks huge and is usually a streak. The model moves that record toward how
+          often teams win in general. A hero with thousands of games barely moves.
+        </p>
+        <p>
+          <span className="text-fg">A pair only adds the extra.</span> Two strong heroes will win a
+          lot together even if they do nothing special as a pair. That expected rate is subtracted.
+          What remains is synergy if they win more than expected, or anti-synergy if they win less.
+          An ordinary pair adds nothing.
+        </p>
+        <p>
+          <span className="text-fg">A matchup works the same way.</span> "We win because our hero
+          is strong and theirs is weak" is already counted in the two hero rates. Only a real
+          counter, beyond that, is added.
+        </p>
+        <p>
+          <span className="text-fg">A lane is the same idea for a street.</span> It is used only
+          when you name two of yours and two of theirs. The model subtracts their hero rates, the
+          pair extras, and the four one-versus-one matchups, and keeps whatever is still left.
+          York, Broadway, and Greenwich are pooled. A solo lane is not in the table.
+        </p>
+        <p>
+          <span className="text-fg">The pieces are not added as percentages.</span> 60% plus 60%
+          cannot be 120%. The model adds the advantages on a stretched scale, then turns the total
+          back into a chance. The point shifts in the ledger are on that curve, so they will not
+          sum to the gap from 50%.
+        </p>
+        <p>
+          <span className="text-fg">The range beside the chance is a rough 95% band.</span> It
+          pretends each hero, pair, and matchup is its own pile of games. One match sits in
+          several of those piles, so the true band is wider than the one shown.
+        </p>
+        <p>
+          <span className="text-fg">The rank menu changes which games are counted.</span> All ranks
+          mixes every lobby. A named rank keeps games where both teams averaged that badge. It
+          does not change the ability-order list below.
+        </p>
+        <p>
+          <span className="text-fg">Items are listed and then left out.</span> The rate is how
+          often the buyer's team won, with a Wilson range. People buy them more often when the
+          match is already going well, so the rate is not the effect of buying the item.
+        </p>
+        <p>
+          <span className="text-fg">A Wilson range is the win rates that could still have produced
+          that record.</span> The middle is wins divided by games. The range gets tighter as the
+          games pile up, and a short streak is not allowed to claim a rate near 0% or 100%. If two
+          ranges overlap, both records are still compatible with one shared rate.
+        </p>
+        <p>
+          <span className="text-fg">Ability order is a separate question.</span> It asks which
+          upgrade sequence won the match more often for that hero. It leaves the most common
+          sequence in place unless another sequence's Wilson range clears it and both have at
+          least 200 games. Under 200 games is marked thin. The clicks also have to be legal: three
+          basic unlocks, then the ultimate at level 8. On every ability the 2-point rank needs the
+          1, so it has cost 3, and the 5-point rank needs both, so it has cost 8. A 5 is never
+          shown before the ultimate unlocks, because those 8 points do not exist yet. The list is
+          all ranks, over the endpoint's default window, not only games since the latest patch.
+        </p>
+      </div>
+    </details>
   );
 }
 
