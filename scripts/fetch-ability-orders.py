@@ -10,6 +10,10 @@ import urllib.request
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from patch_window import resolve
 
 API = "https://api.deadlock-api.com"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "ability-orders.ts"
@@ -56,8 +60,11 @@ def named(bucket):
     return rows
 
 
-def hero_orders(hero, names):
-    rows = get("/v1/analytics/ability-order-stats", {"hero_id": hero["id"], "min_matches": 1})
+def hero_orders(hero, names, window):
+    rows = get(
+        "/v1/analytics/ability-order-stats",
+        {"hero_id": hero["id"], "min_matches": 1, **window},
+    )
     abilities = []
     for slot in (1, 2, 3, 4):
         class_name = (hero.get("items") or {}).get(f"signature{slot}")
@@ -152,10 +159,12 @@ def main():
         if hero.get("id", 0) < 500 and (hero.get("items") or {}).get("signature1") and not hero.get("disabled")
     ]
     playable.sort(key=lambda hero: hero["name"])
+    window, info = resolve(get)
+    print("window", info["label"], "median", info["medianMatches"])
     built = []
     for hero in playable:
         try:
-            row = hero_orders(hero, names)
+            row = hero_orders(hero, names, window)
         except Exception as exc:
             print("skip", hero.get("name"), exc)
             continue

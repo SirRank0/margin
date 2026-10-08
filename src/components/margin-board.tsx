@@ -2,8 +2,9 @@ import { useMemo, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
-import { rankSlices } from "@/data/margin-ranks";
+import { dataWindow } from "@/data/data-window";
 import { laneMatchups } from "@/data/margin-lanes";
+import { rankSlices } from "@/data/margin-ranks";
 
 const SEATS = 6;
 const LANE_NAMES = ["York", "Broadway", "Greenwich"] as const;
@@ -175,10 +176,11 @@ export function MarginBoard() {
         </div>
         <p className="mt-3 text-sm text-pretty text-muted">
           Approximate 95% interval {pct(score.low)}–{pct(score.high)}, if each record were its own
-          sample. Shared matches make the true interval wider. {slice.label} is the last 30 days
-          {slice.id === "all"
-            ? ", every rank mixed together."
-            : " where both teams averaged that badge."}
+          sample. Shared matches make the true interval wider. {slice.label}. Window: {dataWindow.label}
+          {slice.id === "all" ? "." : ", and both teams averaged that badge."}{" "}
+          {dataWindow.switched
+            ? `A newer patch stays on the last 30 days until the median hero has ${dataWindow.enough.toLocaleString()} games in it.`
+            : `The latest patch is not used yet. The median hero has ${dataWindow.medianMatches.toLocaleString()} games in it, and the bar is ${dataWindow.enough.toLocaleString()}.`}
         </p>
         <div className="mt-4 h-3 overflow-hidden rounded-full bg-enemy">
           <div
@@ -423,8 +425,9 @@ function MathNotes() {
         </p>
         <p>
           <span className="text-fg">The rank menu changes which games are counted.</span> All ranks
-          mixes every lobby. A named rank keeps games where both teams averaged that badge. It
-          does not change the ability-order list below.
+          uses the same match window as the rest of the page. A named rank keeps games in that
+          window where both teams averaged that badge. It does not change the ability-order list's
+          rules, only the games that list was built from.
         </p>
         <p>
           <span className="text-fg">Items are listed and then left out.</span> The rate is how
@@ -444,8 +447,10 @@ function MathNotes() {
           least 200 games. Under 200 games is marked thin. The clicks also have to be legal: three
           basic unlocks, then the ultimate at level 8. On every ability the 2-point rank needs the
           1, so it has cost 3, and the 5-point rank needs both, so it has cost 8. A 5 is never
-          shown before the ultimate unlocks, because those 8 points do not exist yet. The list is
-          all ranks, over the endpoint's default window, not only games since the latest patch.
+          shown before the ultimate unlocks, because those 8 points do not exist yet. The list
+          uses the same window as the chance above: games since the latest balance patch once the
+          median hero has 2,400 of them, which keeps a 50% Wilson range inside about 2 points, and
+          the last 30 days until then.
         </p>
       </div>
     </details>

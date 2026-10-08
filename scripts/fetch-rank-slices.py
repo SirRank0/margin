@@ -1,7 +1,8 @@
 """Refresh rank-stratified public rates into src/data/margin-ranks.ts.
 
-Each slice is the API's default 30-day window. A rank slice keeps matches
-whose two teams both averaged that badge tier (tier * 10 + subrank).
+The window is games since the latest balance patch when the median hero has
+at least 2,400 of them, and the API's last 30 days otherwise. A rank slice
+keeps matches whose two teams both averaged that badge tier.
 """
 
 import json
@@ -10,6 +11,10 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from patch_window import resolve
 
 API = "https://api.deadlock-api.com"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "margin-ranks.ts"
@@ -133,7 +138,9 @@ def slice_meta(heroes, pairs, items, names, counters=None):
 
 def main():
     names = {hero["id"]: hero["name"] for hero in get("/v1/assets/heroes")}
-    bands = [("all", "All ranks", None)]
+    window, info = resolve(get)
+    print("window", info["label"], "median", info["medianMatches"])
+    bands = [("all", "All ranks", {})]
     for tier, label in TIERS:
         bands.append(
             (
@@ -148,10 +155,11 @@ def main():
 
     def load(band):
         ident, label, params = band
-        heroes = get("/v1/analytics/hero-stats", params)
-        pairs = get("/v1/analytics/hero-synergy-stats", params)
-        counters = get("/v1/analytics/hero-counter-stats", {**(params or {}), "min_matches": PAIR_MIN})
-        items = get("/v1/analytics/item-stats", params)
+        query = {**window, **params}
+        heroes = get("/v1/analytics/hero-stats", query)
+        pairs = get("/v1/analytics/hero-synergy-stats", query)
+        counters = get("/v1/analytics/hero-counter-stats", {**query, "min_matches": PAIR_MIN})
+        items = get("/v1/analytics/item-stats", query)
         built = slice_meta(heroes, pairs, items, names, counters)
         built["id"] = ident
         built["label"] = label
@@ -178,22 +186,28 @@ def main():
         f"export const rankSlices: RankSlice[] = {payload};\n"
     )
     print("wrote", OUT, "bytes", OUT.stat().st_size)
+    window_path = Path(__file__).resolve().parents[1] / "src" / "data" / "data-window.ts"
+    window_path.write_text(
+        "/** Match window shared by the comp rates, lanes, and ability orders. */\n"
+        f"export const dataWindow = {json.dumps(info, indent=2)} as const;\n"
+    )
+    print("wrote", window_path)
     lane_rows = get(
         "/v1/analytics/lane-matchup-stats",
-        {"min_matches": 80, "group_by": "hero_ids,enemy_hero_ids"},
+        {**window, "min_matches": 30, "group_by": "hero_ids,enemy_hero_ids"},
     )
     lanes = []
     for row in lane_rows:
         a, b = sorted(int(x) for x in row["hero_ids"])
         c, d = sorted(int(x) for x in row["enemy_hero_ids"])
-        if a == b or c == d or row["matches_played"] < 80:
+        if a == b or c == d or row["matches_played"] < 30:
             continue
         lanes.append(
             f"  {{a:{a},b:{b},c:{c},d:{d},wins:{int(row['wins'])},matches:{int(row['matches_played'])}}}"
         )
     LANES.write_text(
         'import type { LaneStat } from "@/lib/odds";\n\n'
-        "/** Duo versus duo, all ranks, last 30 days, at least 80 lane matchups. Streets are pooled. Solo lanes are excluded by the source table. */\n"
+        "/** Duo versus duo, all ranks, same window as dataWindow, at least 30 lane matchups. Streets are pooled. Solo lanes are excluded by the source table. */\n"
         "export const laneMatchups: LaneStat[] = [\n"
         + ",\n".join(lanes)
         + "\n];\n"
