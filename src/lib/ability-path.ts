@@ -38,6 +38,16 @@ export type HeroOrders = {
   ultBeforeFive: Count;
   /** Some 5-point upgrade was bought before the ultimate's 2-point upgrade. */
   fiveBeforeUltAny: Count;
+  /**
+   * How the first four ability points were spent. Those are the points
+   * available before the ultimate unlocks. `spread` bought all three 1-point
+   * ranks. `rush` bought that ability's 2-point rank and left one 1-point rank
+   * unbought.
+   */
+  earlyPoints?: {
+    spread: Count;
+    rush: NamedCount[];
+  };
 };
 
 export type AbilityOrders = {
@@ -133,6 +143,22 @@ function decision(label: string, chosen: Count, chosenName: string, other: Count
   };
 }
 
+type Opening = Count & { ability: number | null };
+
+/** Drop any line whose range sits entirely under another line with enough games. */
+function undominated(rows: Opening[]): { row: Opening; separated: boolean } | null {
+  const eligible = rows.filter((row) => row.matches >= MIN_BRANCH);
+  if (eligible.length === 0) return null;
+  const scored = eligible.map((row) => ({ row, ...interval(row) }));
+  const kept = scored.filter(
+    (row) => !scored.some((other) => other.row !== row.row && other.low > row.high),
+  );
+  kept.sort((a, b) => b.row.matches - a.row.matches);
+  const chosen = kept[0];
+  if (!chosen) return null;
+  return { row: chosen.row, separated: kept.length === 1 };
+}
+
 export function buildPath(hero: HeroOrders): AbilityPath {
   const names = byId(hero);
   const nameOf = (id: number) => names.get(id)?.name ?? String(id);
@@ -140,8 +166,33 @@ export function buildPath(hero: HeroOrders): AbilityPath {
   const ult = hero.abilities.find((ability) => ability.slot === 4);
   const decisions: Decision[] = [];
 
-  const openerPick = choose(hero.openUpgrade);
-  const opener = openerPick?.row.ability ?? basics[0]?.id;
+  let rush: number | null = null;
+  if (hero.earlyPoints) {
+    const openings: Opening[] = [
+      { ...hero.earlyPoints.spread, ability: null },
+      ...hero.earlyPoints.rush.map((row) => ({ ...row })),
+    ];
+    const opening = undominated(openings);
+    if (opening) {
+      rush = opening.row.ability;
+      const other = openings
+        .filter((row) => row.ability !== rush && row.matches >= MIN_BRANCH)
+        .sort((a, b) => b.matches - a.matches)[0];
+      decisions.push(
+        decision(
+          "First four points",
+          opening.row,
+          rush === null ? "Three 1-point ranks" : `${nameOf(rush)} to its 2-point rank`,
+          other ?? null,
+          other ? (other.ability === null ? "Three 1-point ranks" : `${nameOf(other.ability)} to its 2-point rank`) : null,
+          opening.separated,
+        ),
+      );
+    }
+  }
+
+  const openerPick = rush === null ? choose(hero.openUpgrade) : null;
+  const opener = rush ?? openerPick?.row.ability ?? basics[0]?.id;
   if (openerPick && opener !== undefined) {
     const other = hero.openUpgrade
       .filter((row) => row.ability !== opener && row.matches >= MIN_BRANCH)
@@ -270,7 +321,14 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     }
   }
 
-  for (const id of [opener, second, third]) enqueue(id, 1);
+  if (rush !== null) {
+    enqueue(rush, 1);
+    enqueue(second, 1);
+    enqueue(rush, 2);
+    enqueue(third, 1);
+  } else {
+    for (const id of [opener, second, third]) enqueue(id, 1);
+  }
   for (const ability of basics) {
     if (t2Before.has(ability.id) && ability.id !== firstFive) enqueue(ability.id, 2);
   }

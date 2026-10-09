@@ -93,3 +93,41 @@ test("the first 5 is the ability that beats buying the ultimate package first", 
   assert.equal(five?.separated, false);
   assert.equal(five?.chosen.name.includes("Grenade"), true);
 });
+
+test("an early 2-point rank is shown only when no other opening clears it", () => {
+  const hero: HeroOrders = {
+    id: 1,
+    name: "Fixture",
+    wins: 550,
+    matches: 1000,
+    abilities: [
+      { id: 10, name: "Grenade", slot: 1 },
+      { id: 11, name: "Swarm", slot: 2 },
+      { id: 12, name: "Armor", slot: 3 },
+      { id: 13, name: "Ult", slot: 4 },
+    ],
+    openUpgrade: [{ ability: 11, wins: 1600, matches: 3000 }],
+    prefix3: [{ clicks: [10, 10, 11], wins: 2760, matches: 5000 }],
+    beforeFive: [{ t2s: [10], five: 10, wins: 2865, matches: 5000 }],
+    fiveBeforeUlt: [{ ability: 10, wins: 4552, matches: 8000 }],
+    firstMax: [
+      { ability: 10, wins: 5690, matches: 10000 },
+      { ability: 11, wins: 1548, matches: 3000 },
+    ],
+    ultBeforeFive: { wins: 1100, matches: 2000 },
+    fiveBeforeUltAny: { wins: 2800, matches: 5000 },
+    earlyPoints: {
+      spread: { wins: 5400, matches: 10000 },
+      rush: [
+        { ability: 10, wins: 5720, matches: 10000 },
+        { ability: 11, wins: 5000, matches: 10000 },
+      ],
+    },
+  };
+  const path = buildPath(hero);
+  const ranks = path.clicks.map((click) => `${click.ability}:${click.rank}`);
+  assert.deepEqual(ranks.slice(0, 8), ["10:0", "10:1", "11:0", "11:1", "12:0", "10:2", "13:0", "12:1"]);
+  const opening = path.decisions.find((row) => row.label === "First four points");
+  assert.equal(opening?.separated, true);
+  assert.equal(opening?.chosen.name.includes("Grenade"), true);
+});

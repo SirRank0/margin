@@ -81,7 +81,10 @@ def hero_orders(hero, names, window):
     first_max = defaultdict(lambda: [0, 0])
     ult_before = [0, 0]
     five_before = [0, 0]
+    early_spread = [0, 0]
+    early_rush = defaultdict(lambda: [0, 0])
     wins = matches = 0
+    basics = {ability["id"] for ability in abilities if ability["slot"] != 4}
 
     for row in rows:
         seq = [ability for ability in row["abilities"] if ability in known]
@@ -115,6 +118,29 @@ def hero_orders(hero, names, window):
                 five_before[0] += w
                 five_before[1] += n
                 add(five_before_ult, fives[0][0], w, n)
+        seen = {}
+        ap = 0
+        pointed = set()
+        rushed = None
+        for ability in seq:
+            seen[ability] = seen.get(ability, 0) + 1
+            rank = seen[ability]
+            if rank > 4:
+                continue
+            cost = COST[rank]
+            if ap + cost > 4:
+                break
+            if ability in basics and rank == 2:
+                pointed.add(ability)
+            elif ability in basics and rank == 3 and rushed is None:
+                rushed = ability
+            ap += cost
+        if rushed is not None and len(pointed) < 3:
+            early_rush[rushed][0] += w
+            early_rush[rushed][1] += n
+        elif rushed is None and len(pointed) >= 3:
+            early_spread[0] += w
+            early_spread[1] += n
 
     prefixes = [
         {"clicks": list(key), "wins": w, "matches": n}
@@ -141,6 +167,10 @@ def hero_orders(hero, names, window):
         "firstMax": named(first_max),
         "ultBeforeFive": {"wins": ult_before[0], "matches": ult_before[1]},
         "fiveBeforeUltAny": {"wins": five_before[0], "matches": five_before[1]},
+        "earlyPoints": {
+            "spread": {"wins": early_spread[0], "matches": early_spread[1]},
+            "rush": named(early_rush),
+        },
     }
 
 

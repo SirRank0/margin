@@ -444,10 +444,13 @@ function MathNotes() {
           <span className="text-fg">Ability order is a separate question.</span> It asks which
           upgrade sequence won the match more often for that hero. It leaves the most common
           sequence in place unless another sequence's Wilson range clears it and both have at
-          least 200 games. Under 200 games is marked thin. The clicks also have to be legal: three
-          basic unlocks, then the ultimate at level 8. On every ability the 2-point rank needs the
-          1, so it has cost 3, and the 5-point rank needs both, so it has cost 8. A 5 is never
-          shown before the ultimate unlocks, because those 8 points do not exist yet. The list
+          least 200 games. A line that sits entirely under another line is not shown. The first
+          four points, the ones before the ultimate unlocks, buy one ability's 2-point rank when
+          that opening clears the others. Otherwise they buy the three 1-point ranks. Under 200
+          games is marked thin. The clicks also have to be legal: three basic unlocks, then the
+          ultimate at level 8. On every ability the 2-point rank needs the 1, so it has cost 3,
+          and the 5-point rank needs both, so it has cost 8. A 5 is never shown before the
+          ultimate unlocks, because those 8 points do not exist yet. The list
           uses the same window as the chance above: games since the latest balance patch once the
           median hero has 2,400 of them, which keeps a 50% Wilson range inside about 2 points, and
           the last 30 days until then.

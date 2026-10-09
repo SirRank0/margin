@@ -45,13 +45,14 @@ export function AbilityPathSection() {
           <p className="mt-1 text-pretty text-sm text-muted">
             A line is the best only when its Wilson 95% interval does not overlap the line with the
             most games, and both have at least 200 games. Otherwise the largest sample is shown and
-            marked tied. A line under 200 games is marked thin. {dataWindow.label}. A newer patch
-            stays mixed into the longer window until the median hero has {dataWindow.enough} games
-            in it. Unlocks come as the boons arrive. The ultimate is the fourth unlock, at level
-            8, after four ability points have already been earned. On every ability the 2-point
-            rank needs the 1-point rank, so it has cost 3, and the 5-point rank needs both, so it
-            has cost 8. A 5 is never bought before the ultimate unlocks, because those 8 points do
-            not exist yet. This is not part of the comp chance above.
+            marked tied. A line under 200 games is marked thin. A line that sits entirely under
+            another line is not shown. The first four points buy a 2-point rank when that ability
+            clears every other opening, and otherwise buy the three 1-point ranks. {dataWindow.label}.
+            A newer patch stays mixed into the longer window until the median hero has {dataWindow.enough}
+            games in it. The ultimate is the fourth unlock, at level 8. On every ability the
+            2-point rank needs the 1-point rank, so it has cost 3, and the 5-point rank needs both,
+            so it has cost 8. A 5 is never bought before the ultimate unlocks. This is not part of
+            the comp chance above.
           </p>
         </div>
         <label className="flex flex-col gap-1 text-sm text-muted">
