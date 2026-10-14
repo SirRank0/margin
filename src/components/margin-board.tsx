@@ -446,7 +446,9 @@ function MathNotes() {
           sequence in place unless another sequence's Wilson range clears it and both have at
           least 200 games. A line that sits entirely under another line is not shown. The first
           four points, the ones before the ultimate unlocks, buy one ability's 2-point rank when
-          that opening clears the others. Otherwise they buy the three 1-point ranks. Under 200
+          that opening clears the others. Otherwise they buy the three 1-point ranks. Each
+          5-point rank is chosen from the games that already bought the earlier ones, including
+          the ultimate. A later rank is not compared with an earlier one. Under 200
           games is marked thin. The clicks also have to be legal: three basic unlocks, then the
           ultimate at level 8. On every ability the 2-point rank needs the 1, so it has cost 3,
           and the 5-point rank needs both, so it has cost 8. A 5 is never shown before the

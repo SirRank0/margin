@@ -79,6 +79,7 @@ def hero_orders(hero, names, window):
     before = defaultdict(lambda: [0, 0])
     five_before_ult = defaultdict(lambda: [0, 0])
     first_max = defaultdict(lambda: [0, 0])
+    max_steps = defaultdict(lambda: [0, 0])
     ult_before = [0, 0]
     five_before = [0, 0]
     early_spread = [0, 0]
@@ -96,20 +97,22 @@ def hero_orders(hero, names, window):
         if len(seq) >= 3:
             add(prefix3, (seq[0], seq[1], seq[2]), w, n)
         counts = {}
+        order = []
         for ability in seq:
             counts[ability] = counts.get(ability, 0) + 1
             if counts[ability] == 4:
-                add(first_max, ability, w, n)
-                break
+                if not order:
+                    add(first_max, ability, w, n)
+                add(max_steps, (tuple(order), ability), w, n)
+                order.append(ability)
         ev = events(seq)
         basic_t2 = [event for event in ev if event[0] != ult and event[1] == 3]
         fives = [event for event in ev if event[1] == 4]
-        basic_fives = [event for event in fives if event[0] != ult]
         ult_t2 = next((event for event in ev if event[0] == ult and event[1] == 3), None)
-        if basic_t2 and basic_fives:
-            five_ap = basic_fives[0][2]
+        if fives and fives[0][0] != ult and basic_t2:
+            five_ap = fives[0][2]
             done = tuple(sorted(event[0] for event in basic_t2 if event[2] < five_ap))
-            add(before, (done, basic_fives[0][0]), w, n)
+            add(before, (done, fives[0][0]), w, n)
         if ult is not None and (ult_t2 or fives):
             if ult_t2 and (not fives or ult_t2[2] <= fives[0][2]):
                 ult_before[0] += w
@@ -154,6 +157,12 @@ def hero_orders(hero, names, window):
         if n >= KEEP
     ]
     fives.sort(key=lambda row: row["matches"], reverse=True)
+    steps = [
+        {"prefix": list(key[0]), "ability": key[1], "wins": w, "matches": n}
+        for key, (w, n) in max_steps.items()
+        if n >= KEEP
+    ]
+    steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
     return {
         "id": hero["id"],
         "name": hero["name"],
@@ -171,6 +180,7 @@ def hero_orders(hero, names, window):
             "spread": {"wins": early_spread[0], "matches": early_spread[1]},
             "rush": named(early_rush),
         },
+        "maxSteps": steps,
     }
 
 

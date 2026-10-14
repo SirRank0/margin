@@ -18,7 +18,7 @@ test("a higher lower bound wins only when it clears the largest line", () => {
   assert.equal(tied?.separated, false);
 });
 
-test("the first 5 is the ability that beats buying the ultimate package first", () => {
+test("the first 5 follows the first-max table, including the ultimate", () => {
   const hero: HeroOrders = {
     id: 1,
     name: "Fixture",
@@ -60,6 +60,18 @@ test("the first 5 is the ability that beats buying the ultimate package first", 
   };
   const path = buildPath(hero);
   const ranks = path.clicks.map((click) => `${click.ability}:${click.rank}`);
+  const ultUnlock = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 0);
+  assert.equal(ultUnlock, 6);
+  assert.equal(
+    path.clicks.slice(0, ultUnlock).filter((click) => click.rank === 0).length,
+    3,
+  );
+  assert.ok(path.clicks.findIndex((click) => click.rank === 5) > ultUnlock);
+  const firstFive = path.clicks.find((click) => click.rank === 5);
+  assert.equal(firstFive?.ability, 10);
+  const ultFive = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 5);
+  const grenadeFive = path.clicks.findIndex((click) => click.ability === 10 && click.rank === 5);
+  assert.ok(grenadeFive < ultFive);
   assert.deepEqual(ranks.slice(0, 9), [
     "10:0",
     "10:1",
@@ -68,16 +80,9 @@ test("the first 5 is the ability that beats buying the ultimate package first", 
     "12:0",
     "12:1",
     "13:0",
-    "10:2",
-    "10:5",
+    "13:1",
+    "13:2",
   ]);
-  const ultUnlock = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 0);
-  assert.equal(ultUnlock, 6);
-  assert.equal(
-    path.clicks.slice(0, ultUnlock).filter((click) => click.rank === 0).length,
-    3,
-  );
-  assert.ok(path.clicks.findIndex((click) => click.rank === 5) > ultUnlock);
   const cost = { 0: 0, 1: 1, 2: 2, 5: 5 } as const;
   const spent = new Map<number, number>();
   const reached = new Map<number, number>();
@@ -92,6 +97,44 @@ test("the first 5 is the ability that beats buying the ultimate package first", 
   const five = path.decisions.find((row) => row.label.startsWith("First 5"));
   assert.equal(five?.separated, false);
   assert.equal(five?.chosen.name.includes("Grenade"), true);
+});
+
+test("the ultimate is maxed first when its first-max line is the largest and nothing clears it", () => {
+  const hero: HeroOrders = {
+    id: 2,
+    name: "UltFirst",
+    wins: 480,
+    matches: 1000,
+    abilities: [
+      { id: 10, name: "Grenade", slot: 1 },
+      { id: 11, name: "Swarm", slot: 2 },
+      { id: 12, name: "Armor", slot: 3 },
+      { id: 13, name: "Ult", slot: 4 },
+    ],
+    openUpgrade: [{ ability: 10, wins: 4800, matches: 10000 }],
+    prefix3: [{ clicks: [10, 10, 11], wins: 2400, matches: 5000 }],
+    beforeFive: [{ t2s: [10, 11], five: 10, wins: 2400, matches: 5000 }],
+    fiveBeforeUlt: [{ ability: 10, wins: 2300, matches: 5000 }],
+    firstMax: [
+      { ability: 13, wins: 4800, matches: 10000 },
+      { ability: 10, wins: 2350, matches: 5000 },
+    ],
+    ultBeforeFive: { wins: 7000, matches: 14000 },
+    fiveBeforeUltAny: { wins: 2300, matches: 5000 },
+    earlyPoints: {
+      spread: { wins: 2000, matches: 4000 },
+      rush: [{ ability: 10, wins: 4800, matches: 10000 }],
+    },
+  };
+  const path = buildPath(hero);
+  const ultFive = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 5);
+  const basicFive = path.clicks.findIndex((click) => click.ability !== 13 && click.rank === 5);
+  assert.ok(ultFive >= 0 && basicFive >= 0 && ultFive < basicFive);
+  const ultTwo = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 2);
+  assert.ok(ultTwo >= 0 && ultTwo < ultFive);
+  const five = path.decisions.find((row) => row.label === "First 5-point upgrade");
+  assert.equal(five?.chosen.name, "Ult");
+  assert.equal(five?.separated, false);
 });
 
 test("an early 2-point rank is shown only when no other opening clears it", () => {
@@ -130,4 +173,46 @@ test("an early 2-point rank is shown only when no other opening clears it", () =
   const opening = path.decisions.find((row) => row.label === "First four points");
   assert.equal(opening?.separated, true);
   assert.equal(opening?.chosen.name.includes("Grenade"), true);
+});
+
+test("the next 5 is conditional on the ones already maxed", () => {
+  const hero: HeroOrders = {
+    id: 3,
+    name: "Chain",
+    wins: 480,
+    matches: 1000,
+    abilities: [
+      { id: 10, name: "Grenade", slot: 1 },
+      { id: 11, name: "Swarm", slot: 2 },
+      { id: 12, name: "Armor", slot: 3 },
+      { id: 13, name: "Ult", slot: 4 },
+    ],
+    openUpgrade: [{ ability: 10, wins: 4800, matches: 10000 }],
+    prefix3: [{ clicks: [10, 10, 11], wins: 2400, matches: 5000 }],
+    beforeFive: [],
+    fiveBeforeUlt: [],
+    firstMax: [
+      { ability: 13, wins: 4800, matches: 10000 },
+      { ability: 10, wins: 3360, matches: 8000 },
+      { ability: 12, wins: 500, matches: 1000 },
+    ],
+    ultBeforeFive: { wins: 1000, matches: 2000 },
+    fiveBeforeUltAny: { wins: 1000, matches: 2000 },
+    maxSteps: [
+      { prefix: [], ability: 13, wins: 4800, matches: 10000 },
+      { prefix: [], ability: 10, wins: 2000, matches: 5000 },
+      { prefix: [13], ability: 10, wins: 4200, matches: 10000 },
+      { prefix: [13], ability: 12, wins: 2900, matches: 5000 },
+      { prefix: [13, 12], ability: 10, wins: 2500, matches: 5000 },
+      { prefix: [13, 12], ability: 11, wins: 2000, matches: 4000 },
+      { prefix: [13, 12, 10], ability: 11, wins: 2000, matches: 4000 },
+    ],
+  };
+  const path = buildPath(hero);
+  const fives = path.clicks.filter((click) => click.rank === 5).map((click) => click.ability);
+  assert.deepEqual(fives, [13, 12, 10, 11]);
+  const second = path.decisions.find((row) => row.label === "Second 5-point upgrade");
+  assert.equal(second?.chosen.name, "Armor");
+  assert.equal(second?.separated, true);
+  assert.equal(second?.other?.name, "Grenade");
 });

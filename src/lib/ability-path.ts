@@ -16,7 +16,8 @@ export type NamedCount = Count & { ability: number };
 
 export type PrefixCount = Count & { clicks: number[] };
 
-/** Which basic 2-point upgrades were already bought when the first 5-point upgrade was. */
+/** The next 5-point upgrade after `prefix` was already bought, in that order. */
+export type MaxStep = Count & { prefix: number[]; ability: number };
 export type BeforeFive = Count & { t2s: number[]; five: number };
 
 export type HeroOrders = {
@@ -48,6 +49,12 @@ export type HeroOrders = {
     spread: Count;
     rush: NamedCount[];
   };
+  /**
+   * Next 5-point upgrade after the abilities in `prefix` were already maxed.
+   * An empty prefix is the first 5. Counted in every game that reached that
+   * point, so a later step is not compared with an earlier one.
+   */
+  maxSteps?: MaxStep[];
 };
 
 export type AbilityOrders = {
@@ -159,6 +166,44 @@ function undominated(rows: Opening[]): { row: Opening; separated: boolean } | nu
   return { row: chosen.row, separated: kept.length === 1 };
 }
 
+function samePrefix(left: number[], right: number[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+const MAX_LABELS = ["First", "Second", "Third", "Fourth"];
+
+function walkMaxSteps(steps: MaxStep[]): { order: number[]; picks: Array<{ row: MaxStep; separated: boolean; other: MaxStep | null }> } | null {
+  if (steps.length === 0) return null;
+  const order: number[] = [];
+  const picks: Array<{ row: MaxStep; separated: boolean; other: MaxStep | null }> = [];
+  for (let depth = 0; depth < 4; depth += 1) {
+    const rows = steps.filter((row) => samePrefix(row.prefix, order));
+    const pick = choose(rows);
+    if (!pick) break;
+    const other =
+      rows
+        .filter((row) => row.ability !== pick.row.ability && row.matches >= MIN_BRANCH)
+        .sort((a, b) => b.matches - a.matches)[0] ?? null;
+    picks.push({ row: pick.row, separated: pick.separated, other });
+    order.push(pick.row.ability);
+  }
+  return order.length > 0 ? { order, picks } : null;
+}
+
+function orderByEvidence(rows: NamedCount[]): number[] {
+  const left = rows.filter((row) => row.matches > 0).map((row) => ({ ...row }));
+  const order: number[] = [];
+  while (left.length > 0) {
+    const pick = choose(left);
+    if (!pick) break;
+    order.push(pick.row.ability);
+    const index = left.findIndex((row) => row.ability === pick.row.ability);
+    if (index < 0) break;
+    left.splice(index, 1);
+  }
+  return order;
+}
+
 export function buildPath(hero: HeroOrders): AbilityPath {
   const names = byId(hero);
   const nameOf = (id: number) => names.get(id)?.name ?? String(id);
@@ -238,74 +283,86 @@ export function buildPath(hero: HeroOrders): AbilityPath {
   }
   const third = basics.find((ability) => ability.id !== opener && ability.id !== second)?.id;
 
+  const walked = hero.maxSteps ? walkMaxSteps(hero.maxSteps) : null;
+  const maxOrder = walked?.order ?? orderByEvidence(hero.firstMax);
+  const maxPick = walked ? null : choose(hero.firstMax);
+  const firstMaxId = maxOrder[0] ?? maxPick?.row.ability;
+  const firstFiveIsUlt = ult !== undefined && firstMaxId === ult.id;
+  if (walked) {
+    for (let index = 0; index < walked.picks.length; index += 1) {
+      const pick = walked.picks[index];
+      if (!pick) continue;
+      decisions.push(
+        decision(
+          `${MAX_LABELS[index] ?? "Next"} 5-point upgrade`,
+          pick.row,
+          nameOf(pick.row.ability),
+          pick.other,
+          pick.other ? nameOf(pick.other.ability) : null,
+          pick.separated,
+        ),
+      );
+    }
+  } else if (maxPick && firstMaxId !== undefined) {
+    const other = hero.firstMax
+      .filter((row) => row.ability !== firstMaxId && row.matches >= MIN_BRANCH)
+      .sort((a, b) => b.matches - a.matches)[0];
+    decisions.push(
+      decision(
+        "First 5-point upgrade",
+        maxPick.row,
+        nameOf(firstMaxId),
+        other ?? null,
+        other ? nameOf(other.ability) : null,
+        maxPick.separated,
+      ),
+    );
+  }
+
+  const fiveKey = (row: BeforeFive) => `${[...row.t2s].sort((a, b) => a - b).join("+")}|${row.five}`;
+  const packageRows = firstFiveIsUlt ? [] : hero.beforeFive.filter((row) => row.five === firstMaxId);
+  const packagePick = choose(packageRows.map((row) => ({ ...row, key: fiveKey(row) })));
+  const t2Before = new Set(packagePick?.row.t2s ?? []);
+  if (packagePick && firstMaxId !== undefined) {
+    const picked = fiveKey(packagePick.row);
+    const other = packageRows
+      .filter((row) => fiveKey(row) !== picked && row.matches >= MIN_BRANCH)
+      .sort((a, b) => b.matches - a.matches)[0];
+    const labelOf = (row: BeforeFive) => {
+      const prior = row.t2s.filter((id) => id !== row.five).map(nameOf);
+      return prior.length > 0 ? prior.join(" + ") : "No other 2-point rank";
+    };
+    if (other) {
+      decisions.push(
+        decision(
+          "2-point ranks before that 5",
+          packagePick.row,
+          labelOf(packagePick.row),
+          other,
+          labelOf(other),
+          packagePick.separated,
+        ),
+      );
+    }
+  }
+
   const ultGate = choose([
     { ...hero.fiveBeforeUltAny, kind: "five" as const },
     { ...hero.ultBeforeFive, kind: "ult" as const },
   ]);
-  const ultFirst = ultGate?.row.kind === "ult" && ultGate.separated;
-  if (ult && hero.fiveBeforeUltAny.matches + hero.ultBeforeFive.matches > 0) {
+  const ultT2BeforeBasicFive = !firstFiveIsUlt && ultGate?.row.kind === "ult";
+  if (!firstFiveIsUlt && ult && ultGate && hero.fiveBeforeUltAny.matches + hero.ultBeforeFive.matches > 0) {
+    const before = ultGate.row.kind === "ult";
     decisions.push(
       decision(
         "Ultimate's 2-point upgrade",
-        ultFirst ? hero.ultBeforeFive : hero.fiveBeforeUltAny,
-        ultFirst ? "Before any 5-point upgrade" : "After a 5-point upgrade",
-        ultFirst ? hero.fiveBeforeUltAny : hero.ultBeforeFive,
-        ultFirst ? "After a 5-point upgrade" : "Before any 5-point upgrade",
-        ultGate?.separated ?? false,
+        before ? hero.ultBeforeFive : hero.fiveBeforeUltAny,
+        before ? "Before any 5-point upgrade" : "After a 5-point upgrade",
+        before ? hero.fiveBeforeUltAny : hero.ultBeforeFive,
+        before ? "After a 5-point upgrade" : "Before any 5-point upgrade",
+        ultGate.separated,
       ),
     );
-  }
-
-  const beatenByFive = new Set(
-    hero.fiveBeforeUlt
-      .filter((row) => {
-        const gate = hero.ultBeforeFive;
-        if (row.matches < MIN_BRANCH || gate.matches < MIN_BRANCH) return false;
-        const a = interval(row);
-        const b = interval(gate);
-        return a.low > b.high;
-      })
-      .map((row) => row.ability),
-  );
-  let fivePool = hero.beforeFive;
-  if (beatenByFive.size > 0) {
-    const narrowed = fivePool.filter((row) => beatenByFive.has(row.five));
-    if (narrowed.length > 0) fivePool = narrowed;
-  }
-  const fiveKey = (row: BeforeFive) => `${[...row.t2s].sort((a, b) => a - b).join("+")}|${row.five}`;
-  const fivePick = choose(fivePool.map((row) => ({ ...row, key: fiveKey(row) })));
-  const t2Before = new Set(fivePick?.row.t2s ?? []);
-  const firstFive = fivePick?.row.five;
-  if (fivePick && firstFive !== undefined) {
-    const picked = fiveKey(fivePick.row);
-    const other = fivePool
-      .filter((row) => fiveKey(row) !== picked && row.matches >= MIN_BRANCH)
-      .sort((a, b) => b.matches - a.matches)[0];
-    const labelOf = (row: BeforeFive) => {
-      const prior = row.t2s.map(nameOf).join(" + ");
-      return `${prior || "no 2-point upgrade"} → ${nameOf(row.five)}`;
-    };
-    decisions.push(
-      decision(
-        "First 5-point upgrade",
-        fivePick.row,
-        labelOf(fivePick.row),
-        other ?? null,
-        other ? labelOf(other) : null,
-        fivePick.separated,
-      ),
-    );
-  }
-
-  const weakMax = new Set<number>();
-  const maxPick = choose(hero.firstMax);
-  if (maxPick) {
-    const leader = interval(maxPick.separated ? maxPick.row : hero.firstMax.reduce((a, b) => (interval(a).low >= interval(b).low ? a : b)));
-    for (const row of hero.firstMax) {
-      if (row.matches < MIN_BRANCH) continue;
-      const score = interval(row);
-      if (score.high < leader.low) weakMax.add(row.ability);
-    }
   }
 
   const queue: Click[] = [];
@@ -325,26 +382,29 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     enqueue(rush, 1);
     enqueue(second, 1);
     enqueue(rush, 2);
-    enqueue(third, 1);
+    if (!firstFiveIsUlt) enqueue(third, 1);
   } else {
     for (const id of [opener, second, third]) enqueue(id, 1);
   }
-  for (const ability of basics) {
-    if (t2Before.has(ability.id) && ability.id !== firstFive) enqueue(ability.id, 2);
+  if (firstFiveIsUlt) {
+    enqueue(ult?.id, 5);
+  } else {
+    for (const ability of basics) {
+      if (t2Before.has(ability.id) && ability.id !== firstMaxId) enqueue(ability.id, 2);
+    }
+    if (ultT2BeforeBasicFive) enqueue(ult?.id, 2);
+    enqueue(firstMaxId, 5);
   }
-  if (ultFirst) enqueue(ult?.id, 2);
-  enqueue(firstFive, 5);
-  if (!ultFirst) enqueue(ult?.id, 2);
-  const rest = basics
-    .map((ability) => ability.id)
-    .filter((id) => id !== firstFive)
-    .sort(
-      (a, b) =>
-        Number(weakMax.has(a)) - Number(weakMax.has(b)) ||
-        (names.get(a)?.slot ?? 0) - (names.get(b)?.slot ?? 0),
-    );
-  for (const id of rest) enqueue(id, 5);
-  enqueue(ult?.id, 5);
+  for (const id of maxOrder) {
+    if (id === firstMaxId) continue;
+    enqueue(id, 5);
+  }
+  const evidenced = new Set(maxOrder);
+  const leftovers = [...basics.map((ability) => ability.id), ult?.id].filter(
+    (id): id is number => id !== undefined && !evidenced.has(id),
+  );
+  leftovers.sort((a, b) => (names.get(a)?.slot ?? 0) - (names.get(b)?.slot ?? 0));
+  for (const id of leftovers) enqueue(id, 5);
 
   const clicks: Click[] = [];
   const owned = new Map<number, number>();
