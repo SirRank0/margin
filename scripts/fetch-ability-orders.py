@@ -80,6 +80,8 @@ def hero_orders(hero, names, window):
     five_before_ult = defaultdict(lambda: [0, 0])
     first_max = defaultdict(lambda: [0, 0])
     max_steps = defaultdict(lambda: [0, 0])
+    t2_before_step = defaultdict(lambda: [0, 0])
+    continuation = defaultdict(lambda: [0, 0])
     ult_before = [0, 0]
     five_before = [0, 0]
     early_spread = [0, 0]
@@ -113,6 +115,18 @@ def hero_orders(hero, names, window):
             five_ap = fives[0][2]
             done = tuple(sorted(event[0] for event in basic_t2 if event[2] < five_ap))
             add(before, (done, fives[0][0]), w, n)
+        maxed = []
+        for event in fives:
+            prior = tuple(maxed)
+            done = tuple(sorted(
+                other[0] for other in basic_t2
+                if other[0] != event[0] and other[2] < event[2]
+            ))
+            add(t2_before_step, (prior, event[0], done), w, n)
+            maxed.append(event[0])
+        for index, event in enumerate(fives[:-1]):
+            nxt = fives[index + 1]
+            add(continuation, (tuple(fives[:index]), event[0], nxt[0]), w, n)
         if ult is not None and (ult_t2 or fives):
             if ult_t2 and (not fives or ult_t2[2] <= fives[0][2]):
                 ult_before[0] += w
@@ -163,6 +177,18 @@ def hero_orders(hero, names, window):
         if n >= KEEP
     ]
     steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
+    t2_steps = [
+        {"prefix": list(key[0]), "five": key[1], "t2s": list(key[2]), "wins": w, "matches": n}
+        for key, (w, n) in t2_before_step.items()
+        if n >= KEEP
+    ]
+    t2_steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
+    continuations = [
+        {"prefix": list(key[0]), "five": key[1], "nextFive": key[2], "wins": w, "matches": n}
+        for key, (w, n) in continuation.items()
+        if n >= KEEP
+    ]
+    continuations.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
     return {
         "id": hero["id"],
         "name": hero["name"],
@@ -181,6 +207,8 @@ def hero_orders(hero, names, window):
             "rush": named(early_rush),
         },
         "maxSteps": steps,
+        "t2BeforeStep": t2_steps,
+        "continuation": continuations,
     }
 
 

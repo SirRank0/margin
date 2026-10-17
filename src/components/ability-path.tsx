@@ -49,7 +49,10 @@ export function AbilityPathSection() {
             another line is not shown. The first four points buy a 2-point rank when that ability
             clears every other opening, and otherwise buy the three 1-point ranks. Each 5-point
             rank is chosen from the games that already bought the earlier ones, including the
-            ultimate. A later rank is not compared with an earlier one. {dataWindow.label}.
+            ultimate. Before each 5, the 2-point ranks already bought are compared the same way.
+            A 5 is valued by the games that then bought the best next 5, when that sample exists,
+            so a later step can change an earlier one only when that continuation clears.
+            {dataWindow.label}.
             A newer patch stays mixed into the longer window until the median hero has {dataWindow.enough}
             games in it. The ultimate is the fourth unlock, at level 8. On every ability the
             2-point rank needs the 1-point rank, so it has cost 3, and the 5-point rank needs both,
