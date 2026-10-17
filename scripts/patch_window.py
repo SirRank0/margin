@@ -1,7 +1,8 @@
 """Choose the match window shared by the snapshots.
 
-The latest hero-balance patch is 2026-10-05 23:05 UTC. October 6 added Baba
-and did not change existing numbers.
+The latest balance patch is the October 14, 2026 note (published
+2026-10-15 03:11:58 UTC). It changes Baba, Radiant Regeneration, and
+Deadman Danny.
 
 A 50% record has a Wilson 95% half-width of 2 percentage points at 2,400
 games. Games since the patch are used only when the median hero has at least
@@ -10,10 +11,10 @@ that many. Otherwise the API default, the last 30 days, is kept.
 
 from datetime import datetime, timezone
 
-PATCH_AT = datetime(2026, 10, 5, 23, 5, tzinfo=timezone.utc)
+PATCH_AT = datetime(2026, 10, 15, 3, 11, 58, tzinfo=timezone.utc)
 PATCH_UNIX = int(PATCH_AT.timestamp())
 ENOUGH = 2400
-PATCH_LABEL = "Since the October 5, 2026 patch"
+PATCH_LABEL = "Since the October 14, 2026 patch"
 
 
 def resolve(get):
