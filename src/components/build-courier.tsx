@@ -1,34 +1,33 @@
 import { useMemo, useState } from "react";
+import { decompress as fzstd } from "fzstd";
 import { abilityOrders } from "@/data/ability-orders";
 import { decodeCode, encodeCode, readBuild, retarget } from "@/lib/build-courier";
 
 const heroes = [...abilityOrders.heroes].sort((a, b) => a.name.localeCompare(b.name));
 
-type Codec = {
-  decompress(data: Uint8Array): Uint8Array | null;
-  compress(data: Uint8Array): Uint8Array | null;
-};
+async function inflate(data: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream !== "undefined") {
+    try {
+      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("zstd"));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    } catch {
+      // The browser has the API but rejected this frame. Fall through.
+    }
+  }
+  return fzstd(data);
+}
 
-let codecPromise: Promise<Codec> | null = null;
-
-function codec(): Promise<Codec> {
-  codecPromise ??= import("zstd-codec").then(
-    (mod) =>
-      new Promise((resolve, reject) => {
-        const run = mod.ZstdCodec?.run ?? mod.default?.ZstdCodec?.run;
-        if (!run) {
-          reject(new Error("The build codec did not load."));
-          return;
-        }
-        run((zstd: { Simple: new () => Codec }) => resolve(new zstd.Simple()));
-      }),
-  );
-  return codecPromise;
+async function deflate(data: Uint8Array): Promise<Uint8Array> {
+  if (typeof CompressionStream === "undefined") {
+    throw new Error("This browser cannot pack a build code. Use Chrome or Edge.");
+  }
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("zstd"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 export function BuildCourier() {
   const [code, setCode] = useState("");
-  const [heroId, setHeroId] = useState(heroes[0]?.id ?? 0);
+  const [heroId, setHeroId] = useState(heroes.find((hero) => hero.name === "Haze")?.id ?? heroes[0]?.id ?? 0);
   const [name, setName] = useState("");
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -38,20 +37,29 @@ export function BuildCourier() {
 
   const names = useMemo(() => new Map(heroes.map((hero) => [hero.id, hero.name])), []);
 
+  async function read() {
+    setError(null);
+    setFrom(null);
+    if (!code.trim()) return;
+    try {
+      const raw = await inflate(decodeCode(code));
+      const read = readBuild(raw);
+      setFrom(read.heroId != null ? names.get(read.heroId) ?? `hero ${read.heroId}` : "a build with no hero");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That code could not be read.");
+    }
+  }
+
   async function make() {
     setError(null);
     setCopied(false);
     setBusy(true);
     try {
-      const compressed = decodeCode(code);
-      const simple = await codec();
-      const raw = simple.decompress(compressed);
-      if (!raw) throw new Error("That is not a build code.");
+      const raw = await inflate(decodeCode(code));
       const read = readBuild(raw);
-      setFrom(read.heroId != null ? names.get(read.heroId) ?? `hero ${read.heroId}` : null);
-      const next = simple.compress(retarget(raw, heroId, name));
-      if (!next) throw new Error("The new code could not be packed.");
-      setOutput(encodeCode(next));
+      setFrom(read.heroId != null ? names.get(read.heroId) ?? `hero ${read.heroId}` : "a build with no hero");
+      const packed = await deflate(retarget(raw, heroId, name));
+      setOutput(encodeCode(packed));
     } catch (caught) {
       setOutput("");
       setError(caught instanceof Error ? caught.message : "That code could not be read.");
@@ -83,7 +91,9 @@ export function BuildCourier() {
             setCode(event.target.value);
             setOutput("");
             setError(null);
+            setFrom(null);
           }}
+          onBlur={read}
           rows={4}
           placeholder="Nothing pasted yet."
           className="min-h-28 rounded-card border border-line bg-bg px-3 py-2 font-mono text-xs text-fg"

@@ -2,8 +2,8 @@
 
 The game copies a zstd-compressed protobuf. Field 2 of the top message is the
 hero. Nested field 2s are category names and currency types, so only the top
-level is changed. The build id and origin id are dropped so the paste is a new
-build, not a reference to the one it was copied from.
+level is changed. Only the top-level hero is changed. The build id is left alone, because
+dropping it makes the game reject the paste.
 */
 
 export type CourierRead = {
@@ -62,7 +62,6 @@ function rewrite(buf: Uint8Array, heroId: number, name: string | null): Uint8Arr
     const field = tag >> 3;
     const wire = tag & 7;
     const end = skip(buf, afterTag, wire);
-    const keepId = field !== 1 && field !== 9;
     if (field === 2 && wire === 0) {
       out.push(...writeVarint(tag), ...writeVarint(heroId));
       sawHero = true;
