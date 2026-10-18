@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
+import { BuildCourier } from "@/components/build-courier";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
 import { dataWindow } from "@/data/data-window";
 import { laneMatchups } from "@/data/margin-lanes";
@@ -290,6 +291,7 @@ export function MarginBoard() {
         </div>
       </section>
       <AbilityPathSection />
+      <BuildCourier />
     </main>
   );
 }
