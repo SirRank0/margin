@@ -121,16 +121,17 @@ function OddsBoard() {
     [scored, yours, theirs, lanes],
   );
 
-  const shown = [...meta.heroes]
-    .filter((hero) => hero.name.toLowerCase().includes(query.trim().toLowerCase()))
+  const openHeroes = [...meta.heroes]
+    .filter((hero) => !taken.has(hero.id))
     .sort((a, b) => compareHeroNames(a.name, b.name));
 
-  function addHero(id: number) {
-    const list = side === "yours" ? yours : theirs;
-    const setList = side === "yours" ? setYours : setTheirs;
+  function addHero(id: number, which: Side = side) {
+    const list = which === "yours" ? yours : theirs;
+    const setList = which === "yours" ? setYours : setTheirs;
     if (taken.has(id) || list.length >= SEATS) return;
     setList([...list, id]);
-    if (list.length + 1 >= SEATS && side === "yours" && theirs.length < SEATS) {
+    setSide(which);
+    if (list.length + 1 >= SEATS && which === "yours" && theirs.length < SEATS) {
       setSide("theirs");
     }
   }
@@ -178,6 +179,9 @@ function OddsBoard() {
     );
   }
 
+  const shown = openHeroes.filter((hero) =>
+    hero.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
   const yoursFull = yours.length >= SEATS;
 
   return (
@@ -267,7 +271,9 @@ function OddsBoard() {
           active={side === "yours"}
           ids={yours}
           byId={byId}
+          choices={openHeroes}
           onFocus={() => setSide("yours")}
+          onAdd={(id) => addHero(id, "yours")}
           onRemove={(id) => removeHero("yours", id)}
         />
         <TeamCard
@@ -275,7 +281,9 @@ function OddsBoard() {
           active={side === "theirs"}
           ids={theirs}
           byId={byId}
+          choices={openHeroes}
           onFocus={() => setSide("theirs")}
+          onAdd={(id) => addHero(id, "theirs")}
           onRemove={(id) => removeHero("theirs", id)}
         />
       </div>
@@ -293,9 +301,7 @@ function OddsBoard() {
           <div>
             <h2 className="font-display text-2xl text-fg">Heroes</h2>
             <p className="text-sm text-muted">
-              Adding to {side === "yours" ? "your side" : "their side"}
-              {side === "yours" && yoursFull ? " — that side is full" : ""}
-              {side === "theirs" && theirs.length >= SEATS ? " — that side is full" : ""}
+              Adding to {side === "yours" ? "your side" : "their side"}. An empty seat can pick from its own menu.
             </p>
           </div>
           <label className="flex min-h-11 items-center gap-2 rounded-card border border-line bg-bg px-3 sm:w-64">
@@ -752,14 +758,18 @@ function TeamCard({
   active,
   ids,
   byId,
+  choices,
   onFocus,
+  onAdd,
   onRemove,
 }: {
   title: string;
   active: boolean;
   ids: number[];
   byId: Map<number, { id: number; name: string; wins: number; matches: number }>;
+  choices: { id: number; name: string }[];
   onFocus: () => void;
+  onAdd: (id: number) => void;
   onRemove: (id: number) => void;
 }) {
   const seats = Array.from({ length: SEATS }, (_, index) => ids[index] ?? null);
@@ -797,13 +807,23 @@ function TeamCard({
                   <X className="size-4 shrink-0 text-muted" aria-hidden />
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={onFocus}
-                  className="flex min-h-14 w-full items-center rounded-card border border-dashed border-line px-3 text-sm text-muted"
+                <select
+                  value=""
+                  aria-label={`Choose a hero for ${title}`}
+                  onFocus={onFocus}
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    if (next) onAdd(next);
+                  }}
+                  className="min-h-14 w-full rounded-card border border-dashed border-line bg-bg px-3 text-sm text-muted"
                 >
-                  Empty seat
-                </button>
+                  <option value="">Choose a hero</option>
+                  {choices.map((choice) => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.name}
+                    </option>
+                  ))}
+                </select>
               )}
             </li>
           );
