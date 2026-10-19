@@ -157,19 +157,6 @@ async function loadShot(file: File): Promise<RgbImage> {
   const pixels = ctx.getImageData(0, 0, w, h);
   return { w, h, data: pixels.data };
 }
-  const scale = Math.min(1, 560 / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) throw new Error("canvas");
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
-  const pixels = ctx.getImageData(0, 0, w, h);
-  return { w, h, data: pixels.data };
-}
 
 const iconCache = new Map<number, Promise<RgbImage | null>>();
 
