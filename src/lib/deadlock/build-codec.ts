@@ -178,3 +178,57 @@ export function encodeBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+
+export type SkillClick = {
+  ability: number;
+  /** 0 unlock, 1 the 1-point rank, 2 the 2-point rank, 5 the 5-point rank. */
+  rank: 0 | 1 | 2 | 5;
+};
+
+const NEGATIVE: Record<1 | 2 | 5, number[]> = {
+  1: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01],
+  2: [0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01],
+  5: [0xfb, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01],
+};
+
+function skillChange(ability: number, rank: SkillClick["rank"]): number[] {
+  const type = rank === 0 ? 2 : 1;
+  const delta = rank === 2 ? 2 : rank === 5 ? 5 : 1;
+  const id = encodeVarint(ability);
+  return [0x08, ...id, 0x10, type, 0x18, ...NEGATIVE[delta]];
+}
+
+function skillOrder(clicks: SkillClick[]): Uint8Array {
+  const chunks: number[] = [];
+  for (const click of clicks) {
+    const body = skillChange(click.ability, click.rank);
+    chunks.push(0x0a, ...encodeVarint(body.length), ...body);
+  }
+  return Uint8Array.from(chunks);
+}
+
+/** Replace the build's ability order with the target hero's clicks. */
+export function applySkillOrder(decoded: Uint8Array, clicks: SkillClick[]): Uint8Array {
+  if (clicks.length === 0) return decoded;
+  const fields = parseMessage(decoded);
+  const details = fields.find((entry): entry is BytesField => entry.field === 10 && entry.wire === 2);
+  if (!details) throw new BuildCodecError("This build has no skill order to replace.");
+  const inner = parseMessage(details.bytes);
+  const order = skillOrder(clicks);
+  let stamped = false;
+  const nextInner = inner.map((entry): Field => {
+    if (!stamped && entry.field === 2 && entry.wire === 2) {
+      stamped = true;
+      return { field: 2, wire: 2, bytes: order };
+    }
+    return entry;
+  });
+  if (!stamped) nextInner.push({ field: 2, wire: 2, bytes: order });
+  const packed = encodeMessage(nextInner);
+  return encodeMessage(
+    fields.map((entry) =>
+      entry.field === 10 && entry.wire === 2 ? { field: 10, wire: 2, bytes: packed } : entry,
+    ),
+  );
+}

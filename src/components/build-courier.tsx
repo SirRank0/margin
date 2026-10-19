@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Copy, Search } from "lucide-react";
 import {
+  applySkillOrder,
   decodeBase64,
   encodeBase64,
   extractCode,
@@ -8,6 +9,8 @@ import {
   retargetBuild,
   type BuildInfo,
 } from "@/lib/deadlock/build-codec";
+import { abilityOrders } from "@/data/ability-orders";
+import { buildPath } from "@/lib/ability-path";
 import { HEROES, heroLabel, type Hero } from "@/lib/deadlock/heroes";
 import { compressBuild, decompressBuild } from "@/lib/deadlock/zstd";
 
@@ -108,10 +111,11 @@ export function BuildCourier() {
     try {
       const trimmed = name.trim();
       const rename = trimmed !== ready.info.name ? trimmed : undefined;
-      const code =
-        target === ready.info.heroId && rename === undefined
-          ? ready.sourceCode
-          : encodeBase64(await compressBuild(retargetBuild(ready.decoded, target, rename)));
+      const hero = abilityOrders.heroes.find((entry) => entry.id === target);
+      const clicks = hero ? buildPath(hero).clicks : null;
+      const retargeted = retargetBuild(ready.decoded, target, rename);
+      const withOrder = clicks ? applySkillOrder(retargeted, clicks) : retargeted;
+      const code = encodeBase64(await compressBuild(withOrder));
       setOutput(code);
       try {
         await navigator.clipboard.writeText(code);
@@ -189,7 +193,7 @@ export function BuildCourier() {
                 <span className="text-fg">{ready.info.heroName}</span>
                 <ArrowRight className="mx-1 inline size-3.5" aria-hidden="true" />
                 <span className="text-fg">{targetName}</span>
-                <span>. Skill order stays {ready.info.heroName}'s. Set it again after you paste.</span>
+                <span>. Skill order is that hero's optimal path. Paste on the canvas, not the title.</span>
               </>
             ) : (
               "Pick a hero. Paste the result on their build page, on the canvas, not the title."
