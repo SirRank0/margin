@@ -4,7 +4,7 @@ import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
-import { compareHeroNames } from "@/lib/hero-order";
+import { compareHeroNames, compareHeroSearch, heroSearchRank } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
 import { laneMatchups } from "@/data/margin-lanes";
 import { rankSlices } from "@/data/margin-ranks";
@@ -179,9 +179,9 @@ function OddsBoard() {
     );
   }
 
-  const shown = openHeroes.filter((hero) =>
-    hero.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const shown = openHeroes
+    .filter((hero) => heroSearchRank(hero.name, query, hero.id) !== null)
+    .sort(compareHeroSearch(query));
   const yoursFull = yours.length >= SEATS;
 
   return (
@@ -786,7 +786,9 @@ function TeamCard({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
-  const listed = choices.filter((hero) => hero.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const listed = choices
+    .filter((hero) => heroSearchRank(hero.name, query, hero.id) !== null)
+    .sort(compareHeroSearch(query));
 
   useEffect(() => {
     if (!open) return;

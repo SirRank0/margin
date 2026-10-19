@@ -13,7 +13,7 @@ import { abilityOrders } from "@/data/ability-orders";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { buildPath } from "@/lib/ability-path";
 import { HEROES, heroLabel, type Hero } from "@/lib/deadlock/heroes";
-import { compareHeroNames } from "@/lib/hero-order";
+import { compareHeroNames, heroSearchRank } from "@/lib/hero-order";
 import { compressBuild, decompressBuild } from "@/lib/deadlock/zstd";
 
 const STORAGE_KEY = "courier-target-hero";
@@ -90,11 +90,11 @@ export function BuildCourier() {
   }, [raw]);
 
   const released = useMemo(
-    () => byName(filterHeroes(HEROES.filter((hero) => hero.released), query)),
+    () => filterHeroes(HEROES.filter((hero) => hero.released), query),
     [query],
   );
   const coming = useMemo(
-    () => byName(filterHeroes(HEROES.filter((hero) => !hero.released), query)),
+    () => filterHeroes(HEROES.filter((hero) => !hero.released), query),
     [query],
   );
 
@@ -340,13 +340,11 @@ function HeroGrid({
 }
 
 function filterHeroes(heroes: Hero[], query: string): Hero[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return heroes;
-  return heroes.filter(
-    (hero) => hero.name.toLowerCase().includes(needle) || String(hero.id).includes(needle),
-  );
+  return heroes
+    .filter((hero) => heroSearchRank(hero.name, query, hero.id) !== null)
+    .sort((a, b) => {
+      const rank = (heroSearchRank(b.name, query, b.id) ?? -1) - (heroSearchRank(a.name, query, a.id) ?? -1);
+      return rank || compareHeroNames(a.name, b.name);
+    });
 }
 
-function byName(heroes: Hero[]): Hero[] {
-  return [...heroes].sort((a, b) => compareHeroNames(a.name, b.name));
-}
