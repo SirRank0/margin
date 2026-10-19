@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
@@ -773,9 +773,31 @@ function TeamCard({
   onRemove: (id: number) => void;
 }) {
   const seats = Array.from({ length: SEATS }, (_, index) => ids[index] ?? null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const menuRef = useRef<HTMLDivElement>(null);
+  const listed = choices.filter((hero) => hero.name.toLowerCase().includes(query.trim().toLowerCase()));
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   return (
     <section
-      className={`rounded-card border p-4 ${active ? "border-amber bg-surface" : "border-line bg-surface"}`}
+      ref={menuRef}
+      className={`relative rounded-card border p-4 ${active ? "border-amber bg-surface" : "border-line bg-surface"}`}
     >
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-display text-2xl text-fg">{title}</h2>
@@ -807,28 +829,65 @@ function TeamCard({
                   <X className="size-4 shrink-0 text-muted" aria-hidden />
                 </button>
               ) : (
-                <select
-                  value=""
-                  aria-label={`Choose a hero for ${title}`}
-                  onFocus={onFocus}
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    if (next) onAdd(next);
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-haspopup="listbox"
+                  onClick={() => {
+                    onFocus();
+                    setQuery("");
+                    setOpen((value) => !value);
                   }}
-                  className="min-h-14 w-full rounded-card border border-dashed border-line bg-bg px-3 text-sm text-muted"
+                  className={
+                    "flex min-h-14 w-full items-center rounded-card border border-dashed px-3 text-left text-sm " +
+                    (open ? "border-amber text-amber" : "border-line text-muted")
+                  }
                 >
-                  <option value="">Choose a hero</option>
-                  {choices.map((choice) => (
-                    <option key={choice.id} value={choice.id}>
-                      {choice.name}
-                    </option>
-                  ))}
-                </select>
+                  Choose a hero
+                </button>
               )}
             </li>
           );
         })}
       </ul>
+      {open ? (
+        <div className="absolute inset-x-4 top-full z-30 -mt-1 rounded-card border border-amber bg-bg shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+          <label className="flex items-center gap-2 border-b border-line px-3">
+            <Search className="size-4 text-muted" aria-hidden />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search"
+              aria-label={`Search heroes for ${title}`}
+              className="min-h-11 w-full bg-transparent text-sm text-fg outline-none placeholder:text-muted"
+            />
+          </label>
+          {listed.length === 0 ? (
+            <p className="px-3 py-4 text-sm text-muted">No heroes match.</p>
+          ) : (
+            <ul className="grid max-h-72 grid-cols-1 gap-1 overflow-y-auto p-2 sm:grid-cols-2" role="listbox">
+              {listed.map((hero) => (
+                <li key={hero.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    onClick={() => {
+                      onAdd(hero.id);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    className="flex min-h-12 w-full items-center gap-2 rounded-card px-2 text-left hover:bg-raised"
+                  >
+                    <HeroPortrait id={hero.id} name={hero.name} />
+                    <span className="truncate text-sm text-fg">{hero.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }
