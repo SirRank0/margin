@@ -192,8 +192,9 @@ function OddsBoard() {
           <h1 className="font-display text-4xl text-fg sm:text-5xl">Comp odds</h1>
           <p className="mt-2 text-pretty text-muted">
             Pick both lineups. The chance is a shrunk log-odds model of those heroes, the
-            leftover from allies sharing a team, and the leftover from each enemy matchup.
-            Items are shown, but not added in. It is not a ban solver.
+            leftover from allies sharing a team, the leftover from each enemy matchup, and the
+            leftover from a street when you name both duos. Items are shown, but not added in.
+            It is not a ban solver.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
@@ -250,12 +251,11 @@ function OddsBoard() {
           </p>
         </div>
         <p className="mt-3 text-sm text-pretty text-muted">
-          Approximate 95% interval {pct(score.low)}–{pct(score.high)}, if each record were its own
-          sample. Shared matches make the true interval wider. {slice.label}. Window: {dataWindow.label}
+          Approximate 95% interval {pct(score.low)}–{pct(score.high)}, if each hero, pair, matchup,
+          and lane were its own sample. Shared matches make the true interval wider. {slice.label}.
+          Window: {dataWindow.label}
           {slice.id === "all" ? "." : ", and both teams averaged that badge."}{" "}
-          {dataWindow.switched
-            ? `A newer patch stays on the last 30 days until the median hero has ${dataWindow.enough.toLocaleString()} games in it.`
-            : `The latest patch is not used yet. The median hero has ${dataWindow.medianMatches.toLocaleString()} games in it, and the bar is ${dataWindow.enough.toLocaleString()}.`}
+          The next patch stays on the last 30 days until the median hero has {dataWindow.enough.toLocaleString()} games in it.
         </p>
         <div className="mt-4 h-3 overflow-hidden rounded-full bg-enemy">
           <div
@@ -386,7 +386,9 @@ function LaneBoard({
       <h2 className="font-display text-2xl text-fg">Lanes</h2>
       <p className="mt-1 max-w-2xl text-pretty text-sm text-muted">
         Put the two who shared a street on the left, and the two they laned into on the right.
-        The chance uses only the gap left after their rates. A hero in no street is not a lane term.
+        The chance keeps only what is left after their hero rates, their pair gaps, and the four
+        one-versus-one matchups. A hero in no street is not a lane term. York, Broadway, and
+        Greenwich are pooled.
       </p>
       <div className="mt-4 grid gap-3">
         {LANE_NAMES.map((name, index) => (
@@ -466,8 +468,9 @@ function MathNotes() {
       <div className="mt-4 grid max-w-2xl gap-4 text-sm text-pretty text-muted">
         <p>
           <span className="text-fg">The big percentage is your team's chance to win the match.</span>{" "}
-          An empty seat counts as an average hero, so a half-empty draft stays near 50%. It is not
-          a score for one player, and it is not a ban recommendation.
+          An empty seat adds nothing, the same as an average hero. It does not pull the heroes you
+          did pick back toward 50%. It is not a score for one player, and it is not a ban
+          recommendation.
         </p>
         <p>
           <span className="text-fg">Short hero records are pulled toward average.</span> A hero who
@@ -499,14 +502,14 @@ function MathNotes() {
         </p>
         <p>
           <span className="text-fg">The range beside the chance is a rough 95% band.</span> It
-          pretends each hero, pair, and matchup is its own pile of games. One match sits in
+          pretends each hero, pair, matchup, and lane is its own pile of games. One match sits in
           several of those piles, so the true band is wider than the one shown.
         </p>
         <p>
           <span className="text-fg">The rank menu changes which games are counted.</span> All ranks
-          uses the same match window as the rest of the page. A named rank keeps games in that
-          window where both teams averaged that badge. It does not change the ability-order list's
-          rules, only the games that list was built from.
+          uses every game in the window. A named rank keeps games in that window where both teams
+          averaged that badge. The ability order is not split by rank. It always uses every game
+          in the same window.
         </p>
         <p>
           <span className="text-fg">Items are listed and then left out.</span> The rate is how
@@ -520,21 +523,21 @@ function MathNotes() {
           ranges overlap, both records are still compatible with one shared rate.
         </p>
         <p>
-          <span className="text-fg">Ability order is a separate question.</span> It asks which
-          upgrade sequence won the match more often for that hero. It leaves the most common
-          sequence in place unless another sequence's Wilson range clears it and both have at
-          least 200 games. A line that sits entirely under another line is not shown. The first
-          four points, the ones before the ultimate unlocks, buy one ability's 2-point rank when
-          that opening clears the others. Otherwise they buy the three 1-point ranks. Each
-          5-point rank is chosen from the games that already bought the earlier ones, including
-          the ultimate. A later rank is not compared with an earlier one. Under 200
-          games is marked thin. The clicks also have to be legal: three basic unlocks, then the
-          ultimate at level 8. On every ability the 2-point rank needs the 1, so it has cost 3,
-          and the 5-point rank needs both, so it has cost 8. A 5 is never shown before the
-          ultimate unlocks, because those 8 points do not exist yet. The list
-          uses the same window as the chance above: games since the latest balance patch once the
-          median hero has 2,400 of them, which keeps a 50% Wilson range inside about 2 points, and
-          the last 30 days until then.
+          <span className="text-fg">Ability order is a separate section.</span> It asks which
+          upgrade won more often for that hero, among games that had already bought the earlier
+          upgrades. The line with the most games is kept unless another line's Wilson range does
+          not overlap it and both have at least 200 games. A line under 200 games is marked thin.
+          The first four points, the ones before the ultimate unlocks, use the opening with the
+          most games, unless another opening's range sits entirely above it. That opening is one
+          ability's 2-point rank, or the three 1-point ranks. Each 5-point rank is chosen from
+          the games that already maxed the earlier ones. When those games also record the next 5,
+          that next result can change which 5 is picked now. A later 5 is not compared with an
+          earlier 5 as if they were the same decision. On every ability the 2-point rank needs
+          the 1, so it has cost 3, and the 5-point rank needs both, so it has cost 8. A 5 is
+          never shown before the ultimate unlocks. The list uses the same window as the comp
+          odds, and it is not split by the rank menu: games since the latest balance patch once
+          the median hero has 2,400 of them, which keeps a 50% Wilson range inside about 2
+          points, and the last 30 days until then.
         </p>
       </div>
     </details>

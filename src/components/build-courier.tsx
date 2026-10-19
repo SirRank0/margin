@@ -154,7 +154,8 @@ export function BuildCourier() {
         <h2 className="font-display text-2xl text-fg">Build Courier</h2>
         <p className="mt-1 text-pretty text-sm text-muted">
           Paste a build code. Pick who it should belong to. The new code pastes onto that hero, not
-          whoever it was copied from. This does not change the odds or the ability order above.
+          whoever it was copied from. Items are left as copied. The skill order is replaced with
+          the ability order for that hero. This does not change the comp odds or that order.
         </p>
       </div>
 
@@ -200,7 +201,7 @@ export function BuildCourier() {
                 <span className="text-fg">{ready.info.heroName}</span>
                 <ArrowRight className="mx-1 inline size-3.5" aria-hidden="true" />
                 <span className="text-fg">{targetName}</span>
-                <span>. Skill order is that hero's optimal path. Paste on the canvas, not the title.</span>
+                <span>. Skill order is that hero's ability order. Paste on the canvas, not the title.</span>
               </>
             ) : (
               "Pick a hero. Paste the result on their build page, on the canvas, not the title."
