@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { HeroPortrait } from "@/components/hero-portrait";
-import { heroPortraits } from "@/data/hero-portraits";
-import { readTeams, type RgbImage, type TeamRead } from "@/lib/screenshot-teams";
+import {
+  assignNamedTeams,
+  findHeroNameRows,
+  matchHeroName,
+  type NameCrop,
+  type RgbImage,
+  type TeamRead,
+} from "@/lib/screenshot-teams";
 
 type Hero = { id: number; name: string };
 
@@ -35,17 +41,30 @@ export function ScreenshotTeams({
     }
     setBusy(true);
     setRead(null);
-    setStatus("Reading portraits…");
+    setStatus("Reading names…");
     try {
       const shot = await loadShot(file);
-      const icons = await loadIcons(heroes);
-      const next = readTeams(shot, icons);
-      setRead(next);
+      const rows = findHeroNameRows(shot);
+      if (rows.length === 0) {
+        setStatus("No hero names found. Use the scoreboard. The top-bar circles are not read, because a skin does not match the hero picture.");
+        return;
+      }
+      const named: { id: number; anchor: number; luma: number }[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        setStatus(`Reading name ${i + 1} of ${rows.length}…`);
+        const text = await readLine(shot, rows[i]);
+        const id = matchHeroName(text, heroes);
+        if (id !== null) named.push({ id, anchor: rows[i].anchor, luma: rows[i].luma });
+      }
+      const next = assignNamedTeams(named);
       const found = next.yours.length + next.theirs.length;
+      if (found < 4) {
+        setStatus("The names were too unclear to fill a team. Crop closer to the scoreboard and try again.");
+        return;
+      }
+      setRead({ ...next, hits: [] });
       setStatus(
-        found === 0
-          ? "No portraits matched. Use a scoreboard or the top bar, with the hero pictures visible."
-          : `Matched ${found}. The left or top group is your side. Swap on the page if that is backwards.`,
+        `Read ${found} heroes from the names. Your side is the highlighted row's team. Swap on the page if that is backwards.`,
       );
     } catch {
       setStatus("Could not read that image.");
@@ -58,9 +77,9 @@ export function ScreenshotTeams({
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
       <h2 className="font-display text-2xl text-fg">Read a screenshot</h2>
       <p className="mt-3 max-w-2xl text-pretty text-sm text-muted">
-        Paste a scoreboard or the top bar. The page matches the portraits to the hero pictures and
-        fills both sides. It does not read lanes, items, or player names. A portrait that is too
-        small, or covered, is skipped.
+        Paste the scoreboard. The page reads the hero name under each player and fills both
+        sides. Your side is the team with the highlighted row. It does not read the in-game top
+        bar: those circles, especially with a skin, do not match the hero pictures.
       </p>
       <label
         className="mt-4 flex min-h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-card border border-dashed border-line px-4 py-4 text-center text-sm text-muted"
@@ -142,7 +161,7 @@ function imageFile(data: DataTransfer | null): File | undefined {
 
 async function loadShot(file: File): Promise<RgbImage> {
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 560 / Math.max(bitmap.width, bitmap.height));
+  const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
   const w = Math.max(1, Math.round(bitmap.width * scale));
   const h = Math.max(1, Math.round(bitmap.height * scale));
   const canvas = document.createElement("canvas");
@@ -156,45 +175,65 @@ async function loadShot(file: File): Promise<RgbImage> {
   return { w, h, data: pixels.data };
 }
 
-const iconCache = new Map<number, Promise<RgbImage | null>>();
-
-async function loadIcons(heroes: Hero[]) {
-  const icons = await Promise.all(
-    heroes.map(async (hero) => {
-      const url = heroPortraits[hero.id]?.icon;
-      if (!url) return null;
-      const image = await loadIcon(hero.id, url);
-      return image ? { id: hero.id, image } : null;
-    }),
-  );
-  return icons.filter((icon): icon is { id: number; image: RgbImage } => icon !== null);
+async function readLine(shot: RgbImage, row: NameCrop) {
+  const canvas = lineCanvas(shot, row);
+  const worker = await names();
+  const read = await worker.recognize(canvas);
+  return read.data.text;
 }
 
-function loadIcon(id: number, url: string) {
-  const cached = iconCache.get(id);
-  if (cached) return cached;
-  const pending = fetchIcon(url);
-  iconCache.set(id, pending);
-  return pending;
-}
-
-async function fetchIcon(url: string): Promise<RgbImage | null> {
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  img.src = url;
-  try {
-    await img.decode();
-  } catch {
-    return null;
-  }
+function lineCanvas(shot: RgbImage, row: NameCrop) {
+  const scale = 4;
   const canvas = document.createElement("canvas");
-  canvas.width = 48;
-  canvas.height = 48;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return null;
-  ctx.fillStyle = "#101218";
-  ctx.fillRect(0, 0, 48, 48);
-  ctx.drawImage(img, 0, 0, 48, 48);
-  const pixels = ctx.getImageData(0, 0, 48, 48);
-  return { w: 48, h: 48, data: pixels.data };
+  canvas.width = row.w * scale;
+  canvas.height = row.h * scale;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas");
+  const image = ctx.createImageData(row.w, row.h);
+  let lo = 255;
+  let hi = 0;
+  for (let y = 0; y < row.h; y++) {
+    for (let x = 0; x < row.w; x++) {
+      const from = ((row.y + y) * shot.w + row.x + x) * 4;
+      const luma = (shot.data[from] + shot.data[from + 1] + shot.data[from + 2]) / 3;
+      if (luma < lo) lo = luma;
+      if (luma > hi) hi = luma;
+    }
+  }
+  const span = Math.max(1, hi - lo);
+  for (let y = 0; y < row.h; y++) {
+    for (let x = 0; x < row.w; x++) {
+      const from = ((row.y + y) * shot.w + row.x + x) * 4;
+      const luma = (shot.data[from] + shot.data[from + 1] + shot.data[from + 2]) / 3;
+      const ink = 255 - Math.round(((luma - lo) / span) * 255);
+      const to = (y * row.w + x) * 4;
+      image.data[to] = ink;
+      image.data[to + 1] = ink;
+      image.data[to + 2] = ink;
+      image.data[to + 3] = 255;
+    }
+  }
+  const source = document.createElement("canvas");
+  source.width = row.w;
+  source.height = row.h;
+  source.getContext("2d")?.putImageData(image, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+type Reader = { recognize: (image: HTMLCanvasElement) => Promise<{ data: { text: string } }> };
+
+let reader: Promise<Reader> | null = null;
+
+function names() {
+  reader ??= import("tesseract.js").then(async ({ createWorker, PSM }) => {
+    const worker = await createWorker("eng");
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.SINGLE_LINE,
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz &",
+    });
+    return worker;
+  });
+  return reader;
 }

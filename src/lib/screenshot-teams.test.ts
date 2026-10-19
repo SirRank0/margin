@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readTeams, type RgbImage } from "./screenshot-teams.ts";
+import { HEROES } from "./deadlock/heroes.ts";
+import { assignNamedTeams, matchHeroName, readTeams, type RgbImage } from "./screenshot-teams.ts";
 
 function image(w: number, h: number, paint: (x: number, y: number) => [number, number, number]): RgbImage {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -61,4 +62,51 @@ test("a top group and a bottom group split on the wider gap", () => {
   const read = readTeams(shot, icons);
   assert.deepEqual(read.yours, [1, 2]);
   assert.deepEqual(read.theirs, [3, 4]);
+});
+
+test("scoreboard text maps to the hero, including a one-letter miss", () => {
+  const lines = [
+    "4 Violet (A",
+    "IRS Lady Geist |}",
+    "Ry Haze El",
+    "8 Holliday (hl",
+    "&g<3 Rat King ses",
+    "by oraves",
+    "Celeste (A 0",
+    "ce Paige sll",
+    "W  Venator",
+    "@' Deadman Danny (A",
+    "ey Kelvin Ll LL",
+    "Billy ses",
+  ];
+  const ids = lines.map((line) => matchHeroName(line, HEROES));
+  assert.deepEqual(
+    ids.map((id) => HEROES.find((hero) => hero.id === id)?.name),
+    [
+      "Violet",
+      "Lady Geist",
+      "Haze",
+      "Holliday",
+      "Rat King",
+      "Graves",
+      "Celeste",
+      "Paige",
+      "Venator",
+      "Deadman Danny",
+      "Kelvin",
+      "Billy",
+    ],
+  );
+});
+
+test("the highlighted scoreboard team is yours", () => {
+  const rows = [
+    { id: 86, anchor: 100, luma: 40 },
+    { id: 76, anchor: 160, luma: 36 },
+    { id: 81, anchor: 400, luma: 42 },
+    { id: 65, anchor: 460, luma: 90 },
+  ];
+  const teams = assignNamedTeams(rows);
+  assert.deepEqual(teams.yours, [81, 65]);
+  assert.deepEqual(teams.theirs, [86, 76]);
 });

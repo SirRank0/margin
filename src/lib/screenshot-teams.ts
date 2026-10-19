@@ -209,3 +209,157 @@ function dot(left: Float32Array, right: Float32Array) {
   for (let i = 0; i < left.length; i++) sum += left[i] * right[i];
   return sum;
 }
+
+export type NameCrop = { x: number; y: number; w: number; h: number; anchor: number; luma: number };
+
+/** Rows of hero names on a scoreboard. The in-game top bar does not qualify. */
+export function findHeroNameRows(image: RgbImage): NameCrop[] {
+  const { w, h, data } = image;
+  if (w < 200 || h < 200) return [];
+  const x0 = Math.round(w * 0.1);
+  const x1 = Math.round(w * 0.32);
+  const counts = new Uint16Array(h);
+  for (let y = 0; y < h; y++) {
+    let n = 0;
+    const row = y * w;
+    for (let x = x0; x < x1; x++) {
+      const i = (row + x) * 4;
+      if (data[i] > 175 && data[i + 1] > 175 && data[i + 2] > 175) n++;
+    }
+    counts[y] = n;
+  }
+  const groups: [number, number][] = [];
+  let start = -1;
+  let prev = -1;
+  for (let y = 0; y < h; y++) {
+    if (counts[y] < 8) continue;
+    if (start < 0) start = y;
+    else if (y > prev + 3) {
+      groups.push([start, prev]);
+      start = y;
+    }
+    prev = y;
+  }
+  if (start >= 0) groups.push([start, prev]);
+
+  const cropX = Math.round(w * 0.128);
+  const cropW = Math.round(w * 0.23) - cropX;
+  const cropH = Math.max(16, Math.round(h * 0.017));
+  const sampleX = Math.round(w * 0.32);
+  const sampleW = Math.round(w * 0.16);
+  const rows: NameCrop[] = [];
+  for (const [top, bottom] of groups) {
+    if (bottom - top > 36) continue;
+    const y = top + Math.round(h * 0.012);
+    if (y < 0 || y + cropH > h) continue;
+    rows.push({
+      x: cropX,
+      y,
+      w: cropW,
+      h: cropH,
+      anchor: top,
+      luma: patchLuma(image, sampleX, y, sampleW, cropH),
+    });
+  }
+  return rows.length >= 8 ? rows : [];
+}
+
+function patchLuma(image: RgbImage, x: number, y: number, w: number, h: number) {
+  const x1 = Math.min(image.w, x + w);
+  const y1 = Math.min(image.h, y + h);
+  let sum = 0;
+  let n = 0;
+  for (let py = Math.max(0, y); py < y1; py++) {
+    const row = py * image.w;
+    for (let px = Math.max(0, x); px < x1; px++) {
+      const i = (row + px) * 4;
+      sum += image.data[i] + image.data[i + 1] + image.data[i + 2];
+      n++;
+    }
+  }
+  return n ? sum / (n * 3) : 0;
+}
+
+export function matchHeroName(text: string, heroes: { id: number; name: string }[]): number | null {
+  const cleaned = clean(text);
+  if (!cleaned) return null;
+  const padded = ` ${cleaned} `;
+  let best: { id: number; length: number } | null = null;
+  for (const hero of heroes) {
+    const name = clean(hero.name);
+    if (!name) continue;
+    const hit = name.length < 5 ? padded.includes(` ${name} `) : padded.includes(name);
+    if (!hit) continue;
+    if (!best || name.length > best.length) best = { id: hero.id, length: name.length };
+  }
+  if (best) return best.id;
+  const tokens = cleaned.split(" ").filter((token) => token.length >= 6);
+  let near: { id: number; distance: number } | null = null;
+  for (const token of tokens) {
+    for (const hero of heroes) {
+      const name = clean(hero.name);
+      if (name.includes(" ") || name.length < 6) continue;
+      const distance = editDistance(token, name);
+      if (distance > 1) continue;
+      if (near && near.id !== hero.id) return null;
+      near = { id: hero.id, distance };
+    }
+  }
+  return near?.id ?? null;
+}
+
+export function assignNamedTeams(rows: { id: number; anchor: number; luma: number }[]): {
+  yours: number[];
+  theirs: number[];
+} {
+  const ordered = [...rows].sort((a, b) => a.anchor - b.anchor);
+  if (ordered.length === 0) return { yours: [], theirs: [] };
+  if (ordered.length === 1) return { yours: [ordered[0].id], theirs: [] };
+  let cut = 1;
+  let gap = -1;
+  for (let i = 1; i < ordered.length; i++) {
+    const size = ordered[i].anchor - ordered[i - 1].anchor;
+    if (size > gap) {
+      gap = size;
+      cut = i;
+    }
+  }
+  const groups = [ordered.slice(0, cut), ordered.slice(cut)];
+  const lumas = ordered.map((row) => row.luma).sort((a, b) => a - b);
+  const mid = lumas[Math.floor(lumas.length / 2)];
+  const bright = ordered.reduce((best, row) => (row.luma > best.luma ? row : best));
+  const highlighted = bright.luma > mid * 1.35 ? groups.findIndex((group) => group.includes(bright)) : 0;
+  const yours = groups[highlighted] ?? groups[0];
+  const theirs = groups[highlighted === 0 ? 1 : 0] ?? [];
+  return { yours: uniqueIds(yours).slice(0, 6), theirs: uniqueIds(theirs).slice(0, 6) };
+}
+
+function uniqueIds(rows: { id: number }[]) {
+  const ids: number[] = [];
+  for (const row of rows) if (!ids.includes(row.id)) ids.push(row.id);
+  return ids;
+}
+
+function clean(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, " ")
+    .replace(/[^a-z ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function editDistance(left: string, right: string) {
+  const row = new Array<number>(right.length + 1);
+  for (let j = 0; j < row.length; j++) row[j] = j;
+  for (let i = 1; i <= left.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= right.length; j++) {
+      const next = row[j];
+      row[j] = left[i - 1] === right[j - 1] ? prev : 1 + Math.min(prev, row[j], row[j - 1]);
+      prev = next;
+    }
+  }
+  return row[right.length];
+}
