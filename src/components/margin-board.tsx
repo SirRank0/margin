@@ -402,6 +402,7 @@ function LaneBoard({
               <LaneSelect
                 label="Yours"
                 ids={yours}
+                blocked={lanes.flatMap((lane) => lane.yours)}
                 value={lanes[index].yours}
                 byId={byId}
                 onChange={(id) => onAssign(index, "yours", id)}
@@ -409,6 +410,7 @@ function LaneBoard({
               <LaneSelect
                 label="Theirs"
                 ids={theirs}
+                blocked={lanes.flatMap((lane) => lane.theirs)}
                 value={lanes[index].theirs}
                 byId={byId}
                 onChange={(id) => onAssign(index, "theirs", id)}
@@ -435,7 +437,9 @@ function laneNote(
       .join(" + ");
   const label = `${names(lane.yours)} vs ${names(lane.theirs)}`;
   const part = score.parts.find((row) => row.kind === "lane" && row.label === label);
-  if (!part || part.matches <= 0) return "Not in the lane table, so this street adds nothing.";
+  if (!part || part.matches <= 0) {
+    return "These four have not shared a street at least 30 times in this window, so there is no extra lane number to add.";
+  }
   const seen = `Won ${pct(part.observed)} over ${part.matches.toLocaleString()} streets, against ${pct(part.predicted)} already predicted by the heroes.`;
   if (Math.abs(part.leftover) < 0.005) return `${seen} That gap is inside the noise, so it adds nothing.`;
   return `${seen} Kept ${signedPoints(part.marginal)}.`;
@@ -444,12 +448,14 @@ function laneNote(
 function LaneSelect({
   label,
   ids,
+  blocked,
   value,
   byId,
   onChange,
 }: {
   label: string;
   ids: number[];
+  blocked: number[];
   value: number[];
   byId: Map<number, { id: number; name: string }>;
   onChange: (id: number) => void;
@@ -460,8 +466,8 @@ function LaneSelect({
   const chosen = value
     .map((id) => byId.get(id))
     .filter((hero): hero is { id: number; name: string } => Boolean(hero));
-  const choices = ids
-    .filter((id) => !value.includes(id))
+  const free = ids.filter((id) => !blocked.includes(id));
+  const choices = free
     .map((id) => byId.get(id))
     .filter((hero): hero is { id: number; name: string } => Boolean(hero))
     .filter((hero) => heroSearchRank(hero.name, query, hero.id) !== null)
@@ -482,6 +488,13 @@ function LaneSelect({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  const prompt =
+    ids.length === 0
+      ? "Pick this side first"
+      : free.length === 0
+        ? "Everyone on this side is already in a street"
+        : "Choose a hero";
 
   return (
     <div ref={rootRef} className="relative grid gap-1">
@@ -505,18 +518,18 @@ function LaneSelect({
           <button
             type="button"
             aria-expanded={open}
-            disabled={ids.length === 0}
+            disabled={free.length === 0}
             onClick={() => {
               setQuery("");
               setOpen((current) => !current);
             }}
             className="min-h-11 rounded-card border border-dashed border-line px-3 text-left text-sm text-muted disabled:cursor-not-allowed"
           >
-            {ids.length === 0 ? "Pick this side first" : "Choose a hero"}
+            {prompt}
           </button>
         ) : null}
       </div>
-      {open && ids.length > 0 ? (
+      {open && free.length > 0 && value.length < 2 ? (
         <div className="absolute inset-x-0 top-full z-30 mt-1 rounded-card border border-amber bg-bg shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
           <label className="flex items-center gap-2 border-b border-line px-3">
             <Search className="size-4 text-muted" aria-hidden />
@@ -539,8 +552,8 @@ function LaneSelect({
                     type="button"
                     onClick={() => {
                       onChange(hero.id);
-                      setOpen(false);
-                      setQuery("");
+                      if (value.length + 1 >= 2) setOpen(false);
+                      else setQuery("");
                     }}
                     className="flex min-h-11 w-full items-center gap-2 rounded-card px-2 text-left hover:bg-raised"
                   >
@@ -813,7 +826,7 @@ function readPart(part: ScorePart) {
       return {
         who: "Lane",
         math: "not in the lane table",
-        say: "These four have not shared a street at least 30 times in this window, so the street adds nothing.",
+        say: "These four have not shared a street at least 30 times in this window, so there is no extra lane number to add.",
       };
     }
     return {
@@ -985,8 +998,8 @@ function TeamCard({
                     role="option"
                     onClick={() => {
                       onAdd(hero.id);
-                      setOpen(false);
-                      setQuery("");
+                      if (ids.length + 1 >= SEATS) setOpen(false);
+                      else setQuery("");
                     }}
                     className="flex min-h-12 w-full items-center gap-2 rounded-card px-2 text-left hover:bg-raised"
                   >
