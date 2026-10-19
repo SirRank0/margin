@@ -69,7 +69,7 @@ function rewrite(buf: Uint8Array, heroId: number, name: string | null): Uint8Arr
       const bytes = text.encode(name);
       out.push(...writeVarint(tag), ...writeVarint(bytes.length), ...bytes);
       sawName = true;
-    } else if (keepId) {
+    } else {
       out.push(...buf.subarray(start, end));
     }
     at = end;

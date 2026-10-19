@@ -3,26 +3,38 @@ import { decompress as fzstd } from "fzstd";
 import { abilityOrders } from "@/data/ability-orders";
 import { decodeCode, encodeCode, readBuild, retarget } from "@/lib/build-courier";
 
+type Simple = {
+  compress(data: Uint8Array): Uint8Array | null;
+};
+
+let packer: Promise<Simple> | null = null;
+
+function pack(): Promise<Simple> {
+  packer ??= import("zstd-codec").then(
+    (mod) =>
+      new Promise((resolve, reject) => {
+        const run = mod.ZstdCodec?.run ?? mod.default?.ZstdCodec?.run;
+        if (!run) {
+          reject(new Error("The build packer did not load."));
+          return;
+        }
+        run((zstd: { Simple: new () => Simple }) => resolve(new zstd.Simple()));
+      }),
+  );
+  return packer;
+}
+
 const heroes = [...abilityOrders.heroes].sort((a, b) => a.name.localeCompare(b.name));
 
-async function inflate(data: Uint8Array): Promise<Uint8Array> {
-  if (typeof DecompressionStream !== "undefined") {
-    try {
-      const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("zstd"));
-      return new Uint8Array(await new Response(stream).arrayBuffer());
-    } catch {
-      // The browser has the API but rejected this frame. Fall through.
-    }
-  }
+function inflate(data: Uint8Array): Uint8Array {
   return fzstd(data);
 }
 
 async function deflate(data: Uint8Array): Promise<Uint8Array> {
-  if (typeof CompressionStream === "undefined") {
-    throw new Error("This browser cannot pack a build code. Use Chrome or Edge.");
-  }
-  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("zstd"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const simple = await pack();
+  const packed = simple.compress(data);
+  if (!packed) throw new Error("The new code could not be packed.");
+  return packed;
 }
 
 export function BuildCourier() {
@@ -42,7 +54,7 @@ export function BuildCourier() {
     setFrom(null);
     if (!code.trim()) return;
     try {
-      const raw = await inflate(decodeCode(code));
+      const raw = inflate(decodeCode(code));
       const read = readBuild(raw);
       setFrom(read.heroId != null ? names.get(read.heroId) ?? `hero ${read.heroId}` : "a build with no hero");
     } catch (caught) {
@@ -55,7 +67,7 @@ export function BuildCourier() {
     setCopied(false);
     setBusy(true);
     try {
-      const raw = await inflate(decodeCode(code));
+      const raw = inflate(decodeCode(code));
       const read = readBuild(raw);
       setFrom(read.heroId != null ? names.get(read.heroId) ?? `hero ${read.heroId}` : "a build with no hero");
       const packed = await deflate(retarget(raw, heroId, name));
