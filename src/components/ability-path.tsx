@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { abilityOrders } from "@/data/ability-orders";
 import { dataWindow } from "@/data/data-window";
 import { buildPath, MIN_BRANCH, type Click } from "@/lib/ability-path";
+import { compareHeroNames } from "@/lib/hero-order";
 import { wilson } from "@/lib/odds";
 
 function pct(value: number) {
@@ -29,7 +30,7 @@ function rankTitle(rank: Click["rank"]) {
 }
 
 export function AbilityPathSection() {
-  const heroes = abilityOrders.heroes;
+  const heroes = [...abilityOrders.heroes].sort((a, b) => compareHeroNames(a.name, b.name));
   const [heroId, setHeroId] = useState(heroes.find((hero) => hero.id === 84)?.id ?? heroes[0]?.id ?? 0);
   const hero = heroes.find((row) => row.id === heroId) ?? heroes[0];
   const path = useMemo(() => (hero ? buildPath(hero) : null), [hero]);

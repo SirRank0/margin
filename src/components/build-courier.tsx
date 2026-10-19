@@ -12,6 +12,7 @@ import {
 import { abilityOrders } from "@/data/ability-orders";
 import { buildPath } from "@/lib/ability-path";
 import { HEROES, heroLabel, type Hero } from "@/lib/deadlock/heroes";
+import { compareHeroNames } from "@/lib/hero-order";
 import { compressBuild, decompressBuild } from "@/lib/deadlock/zstd";
 
 const STORAGE_KEY = "courier-target-hero";
@@ -87,8 +88,14 @@ export function BuildCourier() {
     };
   }, [raw]);
 
-  const released = useMemo(() => filterHeroes(HEROES.filter((hero) => hero.released), query), [query]);
-  const coming = useMemo(() => filterHeroes(HEROES.filter((hero) => !hero.released), query), [query]);
+  const released = useMemo(
+    () => byName(filterHeroes(HEROES.filter((hero) => hero.released), query)),
+    [query],
+  );
+  const coming = useMemo(
+    () => byName(filterHeroes(HEROES.filter((hero) => !hero.released), query)),
+    [query],
+  );
 
   function forgetPacked() {
     setOutput("");
@@ -333,4 +340,8 @@ function filterHeroes(heroes: Hero[], query: string): Hero[] {
   return heroes.filter(
     (hero) => hero.name.toLowerCase().includes(needle) || String(hero.id).includes(needle),
   );
+}
+
+function byName(heroes: Hero[]): Hero[] {
+  return [...heroes].sort((a, b) => compareHeroNames(a.name, b.name));
 }

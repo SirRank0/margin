@@ -1,14 +1,22 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
+import { compareHeroNames } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
 import { laneMatchups } from "@/data/margin-lanes";
 import { rankSlices } from "@/data/margin-ranks";
 
 const SEATS = 6;
 const LANE_NAMES = ["York", "Broadway", "Greenwich"] as const;
+const TABS = [
+  { id: "odds", label: "Comp odds" },
+  { id: "order", label: "Ability order" },
+  { id: "courier", label: "Build courier" },
+] as const;
+
+type Tab = (typeof TABS)[number]["id"];
 
 type Side = "yours" | "theirs";
 type LaneSlots = { yours: number[]; theirs: number[] };
@@ -34,6 +42,73 @@ function monogram(name: string) {
 }
 
 export function MarginBoard() {
+  const [tab, setTab] = useState<Tab>("odds");
+
+  useEffect(() => {
+    const fromHash = () => {
+      const hash = window.location.hash.replace("#", "");
+      setTab(TABS.some((item) => item.id === hash) ? (hash as Tab) : "odds");
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
+
+  function chooseTab(next: Tab) {
+    setTab(next);
+    const base = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(null, "", next === "odds" ? base : `${base}#${next}`);
+  }
+
+  return (
+    <div>
+      <SiteNav tab={tab} onChoose={chooseTab} />
+      {tab === "odds" ? <OddsBoard /> : null}
+      {tab === "order" ? (
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+          <AbilityPathSection />
+        </main>
+      ) : null}
+      {tab === "courier" ? (
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+          <BuildCourier />
+        </main>
+      ) : null}
+    </div>
+  );
+}
+
+function SiteNav({ tab, onChoose }: { tab: Tab; onChoose: (tab: Tab) => void }) {
+  return (
+    <header className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-end sm:justify-between sm:px-6">
+        <p className="font-display text-lg tracking-[0.22em] text-amber uppercase">Margin</p>
+        <nav aria-label="Sections" className="flex gap-1">
+          {TABS.map((item) => {
+            const selected = item.id === tab;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => onChoose(item.id)}
+                className={
+                  "min-h-11 border-b-2 px-3 text-sm " +
+                  (selected ? "border-amber text-amber" : "border-transparent text-muted")
+                }
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+    </header>
+  );
+}
+
+function OddsBoard() {
   const [rankId, setRankId] = useState(rankSlices[0].id);
   const slice = rankSlices.find((row) => row.id === rankId) ?? rankSlices[0];
   const meta = slice.meta;
@@ -51,9 +126,9 @@ export function MarginBoard() {
     [scored, yours, theirs, lanes],
   );
 
-  const shown = meta.heroes.filter((hero) =>
-    hero.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const shown = [...meta.heroes]
+    .filter((hero) => hero.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => compareHeroNames(a.name, b.name));
 
   function addHero(id: number) {
     const list = side === "yours" ? yours : theirs;
@@ -114,8 +189,7 @@ export function MarginBoard() {
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-xl">
-          <p className="text-sm font-medium tracking-wide text-amber uppercase">Margin</p>
-          <h1 className="mt-1 font-display text-4xl text-fg sm:text-5xl">Comp odds</h1>
+          <h1 className="font-display text-4xl text-fg sm:text-5xl">Comp odds</h1>
           <p className="mt-2 text-pretty text-muted">
             Pick both lineups. The chance is a shrunk log-odds model of those heroes, the
             leftover from allies sharing a team, and the leftover from each enemy matchup.
@@ -290,8 +364,6 @@ export function MarginBoard() {
           })}
         </div>
       </section>
-      <AbilityPathSection />
-      <BuildCourier />
     </main>
   );
 }
@@ -363,13 +435,18 @@ function LaneSelect({
         className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
       >
         <option value="">{value.length ? value.map((id) => byId.get(id)?.name ?? id).join(" + ") : "Add a hero"}</option>
-        {value.map((id) => (
+        {value
+          .slice()
+          .sort((a, b) => compareHeroNames(byId.get(a)?.name ?? "", byId.get(b)?.name ?? ""))
+          .map((id) => (
           <option key={`out-${id}`} value={-id}>
             Remove {byId.get(id)?.name ?? id}
           </option>
         ))}
         {ids
           .filter((id) => !value.includes(id))
+          .slice()
+          .sort((a, b) => compareHeroNames(byId.get(a)?.name ?? "", byId.get(b)?.name ?? ""))
           .map((id) => (
             <option key={id} value={id}>
               {byId.get(id)?.name ?? id}

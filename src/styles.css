@@ -2,18 +2,18 @@
 
 @theme {
   --font-sans: "Outfit", system-ui, sans-serif;
-  --font-display: "Fraunces", Georgia, serif;
-  --color-bg: #12110e;
-  --color-surface: #1c1a16;
-  --color-raised: #26231d;
-  --color-fg: #f3ecdf;
-  --color-muted: #a39886;
-  --color-line: #3a342c;
-  --color-amber: #e2a23a;
+  --font-display: "Cinzel", Georgia, serif;
+  --color-bg: #0c0b09;
+  --color-surface: #141210;
+  --color-raised: #1e1a14;
+  --color-fg: #f4efe4;
+  --color-muted: #b3a794;
+  --color-line: #4a3d28;
+  --color-amber: #e0b15a;
   --color-ink: #1a1408;
-  --color-ally: #3f9d88;
-  --color-enemy: #d0654f;
-  --radius-card: 1rem;
+  --color-ally: #e0b15a;
+  --color-enemy: #6a9ec0;
+  --radius-card: 0.35rem;
 }
 
 @layer base {
@@ -22,12 +22,17 @@
     -moz-osx-font-smoothing: grayscale;
   }
   body {
-    background: var(--color-bg);
+    background:
+      radial-gradient(1100px 480px at 0% -10%, rgba(224, 177, 90, 0.14), transparent 55%),
+      radial-gradient(900px 420px at 100% 0%, rgba(106, 158, 192, 0.12), transparent 50%),
+      var(--color-bg);
+    background-attachment: fixed;
     color: var(--color-fg);
     font-family: var(--font-sans);
   }
   button:not(:disabled),
-  [role="button"]:not(:disabled) {
+  [role="button"]:not(:disabled),
+  [role="tab"]:not(:disabled) {
     cursor: pointer;
   }
   h1, h2 {
