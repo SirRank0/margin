@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
+import { HeroPortrait } from "@/components/hero-portrait";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
 import { compareHeroNames } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
@@ -33,12 +34,6 @@ function compact(matches: number) {
   if (matches >= 1_000_000) return `${(matches / 1_000_000).toFixed(1)}m`;
   if (matches >= 1000) return `${Math.round(matches / 1000)}k`;
   return String(matches);
-}
-
-function monogram(name: string) {
-  const parts = name.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 export function MarginBoard() {
@@ -326,9 +321,7 @@ function OddsBoard() {
                 title={`${pct(rate.low)}–${pct(rate.high)} Wilson 95% interval`}
                 className="flex min-h-14 items-center gap-3 rounded-card border border-line bg-raised px-3 py-2 text-left disabled:opacity-40"
               >
-                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-bg font-medium text-amber">
-                  {monogram(hero.name)}
-                </span>
+                <HeroPortrait id={hero.id} name={hero.name} />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-fg">{hero.name}</span>
                   <span className="block tabular-nums text-sm text-muted">
@@ -797,7 +790,10 @@ function TeamCard({
                   onClick={() => onRemove(hero.id)}
                   className="flex min-h-14 w-full items-center justify-between gap-2 rounded-card bg-raised px-3 text-left"
                 >
-                  <span className="truncate text-sm font-medium text-fg">{hero.name}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <HeroPortrait id={hero.id} name={hero.name} />
+                    <span className="truncate text-sm font-medium text-fg">{hero.name}</span>
+                  </span>
                   <X className="size-4 shrink-0 text-muted" aria-hidden />
                 </button>
               ) : (

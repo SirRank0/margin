@@ -3,6 +3,7 @@ import { abilityOrders } from "@/data/ability-orders";
 import { dataWindow } from "@/data/data-window";
 import { buildPath, MIN_BRANCH, type Click } from "@/lib/ability-path";
 import { compareHeroNames } from "@/lib/hero-order";
+import { HeroPortrait } from "@/components/hero-portrait";
 import { wilson } from "@/lib/odds";
 
 function pct(value: number) {
@@ -59,7 +60,9 @@ export function AbilityPathSection() {
             unlocks. This is not part of the comp odds, and it is not split by rank.
           </p>
         </div>
-        <label className="flex flex-col gap-1 text-sm text-muted">
+        <div className="flex items-end gap-3">
+          <HeroPortrait id={hero.id} name={hero.name} size="card" />
+          <label className="flex flex-col gap-1 text-sm text-muted">
           Hero
           <select
             value={hero.id}
@@ -73,6 +76,7 @@ export function AbilityPathSection() {
             ))}
           </select>
         </label>
+        </div>
       </div>
       <p className="mt-3 text-sm tabular-nums text-muted">
         {pct(overall.p)} ({pct(overall.low)}–{pct(overall.high)}) · {compact(hero.matches)} games ·{" "}

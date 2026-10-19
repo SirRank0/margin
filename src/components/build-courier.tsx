@@ -10,6 +10,7 @@ import {
   type BuildInfo,
 } from "@/lib/deadlock/build-codec";
 import { abilityOrders } from "@/data/ability-orders";
+import { HeroPortrait } from "@/components/hero-portrait";
 import { buildPath } from "@/lib/ability-path";
 import { HEROES, heroLabel, type Hero } from "@/lib/deadlock/heroes";
 import { compareHeroNames } from "@/lib/hero-order";
@@ -321,11 +322,14 @@ function HeroGrid({
               onClick={() => onChoose(hero.id)}
               aria-pressed={selected}
               className={
-                "flex h-11 w-full items-center justify-between gap-2 rounded-card border px-3 text-left text-sm " +
+                "flex min-h-14 w-full items-center justify-between gap-2 rounded-card border px-2 text-left text-sm " +
                 (selected ? "border-fg bg-fg text-bg" : "border-line bg-raised text-fg")
               }
             >
-              <span className="truncate">{hero.name}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <HeroPortrait id={hero.id} name={hero.name} />
+                <span className="truncate">{hero.name}</span>
+              </span>
               {from ? <span className="font-mono text-xs">from</span> : null}
             </button>
           </li>
