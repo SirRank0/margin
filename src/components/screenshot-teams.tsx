@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { heroPortraits } from "@/data/hero-portraits";
 import { readTeams, type RgbImage, type TeamRead } from "@/lib/screenshot-teams";
@@ -15,12 +15,10 @@ export function ScreenshotTeams({
   const [status, setStatus] = useState("Drop a scoreboard, or paste one.");
   const [busy, setBusy] = useState(false);
   const [read, setRead] = useState<TeamRead | null>(null);
-  const rootRef = useRef<HTMLDetailsElement>(null);
   const byId = new Map(heroes.map((hero) => [hero.id, hero]));
 
   useEffect(() => {
     function onPaste(event: ClipboardEvent) {
-      if (!rootRef.current?.open) return;
       const file = imageFile(event.clipboardData);
       if (!file) return;
       event.preventDefault();
@@ -57,8 +55,8 @@ export function ScreenshotTeams({
   }
 
   return (
-    <details ref={rootRef} className="rounded-card border border-line bg-surface p-4 sm:p-5">
-      <summary className="cursor-pointer font-display text-2xl text-fg">Read a screenshot</summary>
+    <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
+      <h2 className="font-display text-2xl text-fg">Read a screenshot</h2>
       <p className="mt-3 max-w-2xl text-pretty text-sm text-muted">
         Paste a scoreboard or the top bar. The page matches the portraits to the hero pictures and
         fills both sides. It does not read lanes, items, or player names. A portrait that is too
@@ -101,7 +99,7 @@ export function ScreenshotTeams({
           </button>
         </div>
       ) : null}
-    </details>
+    </section>
   );
 }
 

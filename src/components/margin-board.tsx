@@ -234,6 +234,16 @@ function OddsBoard() {
         </div>
       </header>
 
+      <ScreenshotTeams
+        heroes={meta.heroes.map((hero) => ({ id: hero.id, name: hero.name }))}
+        onApply={(nextYours, nextTheirs) => {
+          setYours(nextYours.slice(0, SEATS));
+          setTheirs(nextTheirs.slice(0, SEATS));
+          setLanes(emptyLanes());
+          setSide(nextYours.length >= SEATS ? "theirs" : "yours");
+        }}
+      />
+
       <MathNotes />
 
       <section className="rounded-card border border-line bg-surface p-4 sm:p-6">
@@ -266,16 +276,6 @@ function OddsBoard() {
         </div>
         <Ledger score={score} />
       </section>
-
-      <ScreenshotTeams
-        heroes={meta.heroes.map((hero) => ({ id: hero.id, name: hero.name }))}
-        onApply={(nextYours, nextTheirs) => {
-          setYours(nextYours.slice(0, SEATS));
-          setTheirs(nextTheirs.slice(0, SEATS));
-          setLanes(emptyLanes());
-          setSide(nextYours.length >= SEATS ? "theirs" : "yours");
-        }}
-      />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <TeamCard
