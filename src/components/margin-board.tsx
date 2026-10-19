@@ -3,6 +3,7 @@ import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
 import { HeroPortrait } from "@/components/hero-portrait";
+import { ScreenshotTeams } from "@/components/screenshot-teams";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
 import { compareHeroNames, compareHeroSearch, heroSearchRank } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
@@ -265,6 +266,16 @@ function OddsBoard() {
         </div>
         <Ledger score={score} />
       </section>
+
+      <ScreenshotTeams
+        heroes={meta.heroes.map((hero) => ({ id: hero.id, name: hero.name }))}
+        onApply={(nextYours, nextTheirs) => {
+          setYours(nextYours.slice(0, SEATS));
+          setTheirs(nextTheirs.slice(0, SEATS));
+          setLanes(emptyLanes());
+          setSide(nextYours.length >= SEATS ? "theirs" : "yours");
+        }}
+      />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <TeamCard
