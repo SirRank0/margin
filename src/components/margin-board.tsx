@@ -555,70 +555,75 @@ function Ledger({ score }: { score: Score }) {
     score.parts.filter((part) => part.kind === "counter").length - counters.length;
 
   return (
-    <div className="mt-5 border-t border-line pt-5">
-      <h2 className="font-display text-2xl text-fg">How this number is built</h2>
-      <p className="mt-1 max-w-2xl text-pretty text-sm text-muted">
+    <details className="mt-5 border-t border-line pt-5">
+      <summary className="cursor-pointer font-display text-2xl text-fg">How this number is built</summary>
+      <p className="mt-3 max-w-2xl text-pretty text-sm text-muted">
         Same layout as a worked sum: the term, the arithmetic, and what it does. A pair is not
         entered as its win rate. That win rate is only compared with the rate the two heroes
         already implied.
       </p>
-      <ol className="mt-4 grid gap-2 text-sm">
-        <MethodRow
-          who="Hero"
-          math="θ = logit(win rate) − logit(field)"
-          say="Each pick adds its own rate. Theirs is subtracted. Thin samples are pulled toward the field."
-        />
-        <MethodRow
-          who="Pair"
-          math="r = logit(together) − θ₁ − θ₂"
-          say="Only the gap after both rates. More together than that is synergy. Less is anti-synergy. A typical pair is pulled to zero."
-        />
-        <MethodRow
-          who="Matchup"
-          math="d = logit(versus) − θyou + θthem"
-          say="Only the gap after both strengths. A usual matchup is pulled to zero."
-        />
-        <MethodRow
-          who="Lane"
-          math="λ = logit(duo vs duo) − θs − r − d"
-          say="Only the gap after both duos' rates, their together-gaps, and the four one-versus-one gaps. York, Broadway, and Greenwich are pooled. A solo lane is not in the table."
-        />
-        <MethodRow
-          who="Chance"
-          math="σ( Σθyou + Σryou − Σθthem − Σrthem + Σd + Σλ )"
-          say="The sum is on a log-odds scale, then turned back into a chance. The point shifts share that curve, so they do not add up to the gap from 50%."
-        />
-      </ol>
-      {score.parts.length === 0 ? (
-        <p className="mt-4 text-sm text-muted">
-          No heroes yet, so every term is zero and the chance stays at one half.
-        </p>
-      ) : (
-        <div className="mt-4 grid gap-4">
-          <TermGroup title="Heroes" parts={heroes} />
-          <TermGroup
-            title="Pairs"
-            parts={pairs}
-            empty="Add two heroes on the same side to see a pair."
-          />
-          <TermGroup
-            title="Matchups"
-            parts={counters}
-            empty="Add a hero on each side to see a matchup."
-            note={
-              hiddenCounters > 0
-                ? `${hiddenCounters} other matchups were within 0.3 points of what the two strengths already predict, so they add nothing.`
-                : undefined
-            }
-          />
-          <TermGroup
-            title="Lanes"
-            parts={score.parts.filter((part) => part.kind === "lane")}
-            empty="Put two of yours and two of theirs in the same street to see a lane."
-          />
-        </div>
-      )}
-    </div>
+      <div className="mt-4 grid gap-2">
+        <details className="rounded-card border border-line bg-bg">
+          <summary className="cursor-pointer px-3 py-3 text-sm font-medium text-fg">Formulas</summary>
+          <ol className="grid gap-2 px-3 pb-3 text-sm">
+            <MethodRow
+              who="Hero"
+              math="θ = logit(win rate) − logit(field)"
+              say="Each pick adds its own rate. Theirs is subtracted. Thin samples are pulled toward the field."
+            />
+            <MethodRow
+              who="Pair"
+              math="r = logit(together) − θ₁ − θ₂"
+              say="Only the gap after both rates. More together than that is synergy. Less is anti-synergy. A typical pair is pulled to zero."
+            />
+            <MethodRow
+              who="Matchup"
+              math="d = logit(versus) − θyou + θthem"
+              say="Only the gap after both strengths. A usual matchup is pulled to zero."
+            />
+            <MethodRow
+              who="Lane"
+              math="λ = logit(duo vs duo) − θs − r − d"
+              say="Only the gap after both duos' rates, their together-gaps, and the four one-versus-one gaps. York, Broadway, and Greenwich are pooled. A solo lane is not in the table."
+            />
+            <MethodRow
+              who="Chance"
+              math="σ( Σθyou + Σryou − Σθthem − Σrthem + Σd + Σλ )"
+              say="The sum is on a log-odds scale, then turned back into a chance. The point shifts share that curve, so they do not add up to the gap from 50%."
+            />
+          </ol>
+        </details>
+        {score.parts.length === 0 ? (
+          <p className="text-sm text-muted">
+            No heroes yet, so every term is zero and the chance stays at one half.
+          </p>
+        ) : (
+          <>
+            <TermGroup title="Heroes" parts={heroes} />
+            <TermGroup
+              title="Pairs"
+              parts={pairs}
+              empty="Add two heroes on the same side to see a pair."
+            />
+            <TermGroup
+              title="Matchups"
+              parts={counters}
+              empty="Add a hero on each side to see a matchup."
+              note={
+                hiddenCounters > 0
+                  ? `${hiddenCounters} other matchups were within 0.3 points of what the two strengths already predict, so they add nothing.`
+                  : undefined
+              }
+            />
+            <TermGroup
+              title="Lanes"
+              parts={score.parts.filter((part) => part.kind === "lane")}
+              empty="Put two of yours and two of theirs in the same street to see a lane."
+            />
+          </>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -646,19 +651,24 @@ function TermGroup({
   note?: string;
 }) {
   return (
-    <section>
-      <h3 className="text-sm font-medium text-fg">{title}</h3>
-      {parts.length === 0 ? (
-        <p className="mt-2 text-sm text-muted">{empty}</p>
-      ) : (
-        <ul className="mt-2 divide-y divide-line border-y border-line">
-          {parts.map((part) => (
-            <TermRow key={`${part.kind}-${part.side}-${part.label}`} part={part} />
-          ))}
-        </ul>
-      )}
-      {note ? <p className="mt-2 text-sm text-muted">{note}</p> : null}
-    </section>
+    <details className="rounded-card border border-line bg-bg">
+      <summary className="flex cursor-pointer items-baseline justify-between gap-3 px-3 py-3 text-sm font-medium text-fg">
+        {title}
+        <span className="tabular-nums text-muted">{parts.length}</span>
+      </summary>
+      <div className="px-3 pb-3">
+        {parts.length === 0 ? (
+          <p className="text-sm text-muted">{empty}</p>
+        ) : (
+          <ul className="divide-y divide-line border-y border-line">
+            {parts.map((part) => (
+              <TermRow key={`${part.kind}-${part.side}-${part.label}`} part={part} />
+            ))}
+          </ul>
+        )}
+        {note ? <p className="mt-2 text-sm text-muted">{note}</p> : null}
+      </div>
+    </details>
   );
 }
 
