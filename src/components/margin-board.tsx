@@ -164,19 +164,20 @@ function OddsBoard() {
     if (!id) return;
     const removing = id < 0;
     const heroId = Math.abs(id);
-    setLanes((current) =>
-      current.map((lane, laneIndex) => {
+    setLanes((current) => {
+      const destination = current[index]?.[which] ?? [];
+      if (!removing && !destination.includes(heroId) && destination.length >= 2) return current;
+      return current.map((lane, laneIndex) => {
         const next = {
           yours: lane.yours.filter((hero) => hero !== heroId),
           theirs: lane.theirs.filter((hero) => hero !== heroId),
         };
         if (removing || laneIndex !== index) return next;
         const list = which === "yours" ? next.yours : next.theirs;
-        if (list.length >= 2) return next;
-        list.push(heroId);
+        if (list.length < 2) list.push(heroId);
         return next;
-      }),
-    );
+      });
+    });
   }
 
   const shown = openHeroes
@@ -293,6 +294,7 @@ function OddsBoard() {
         yours={yours}
         theirs={theirs}
         byId={byId}
+        score={score}
         onAssign={assignLane}
       />
 
@@ -372,12 +374,14 @@ function LaneBoard({
   yours,
   theirs,
   byId,
+  score,
   onAssign,
 }: {
   lanes: LaneSlots[];
   yours: number[];
   theirs: number[];
   byId: Map<number, { id: number; name: string }>;
+  score: Score;
   onAssign: (index: number, which: Side, id: number) => void;
 }) {
   return (
@@ -390,28 +394,51 @@ function LaneBoard({
         Greenwich are pooled.
       </p>
       <div className="mt-4 grid gap-3">
-        {LANE_NAMES.map((name, index) => (
-          <div key={name} className="grid gap-2 sm:grid-cols-[7rem_1fr_1fr] sm:items-center">
-            <p className="text-sm font-medium text-amber">{name}</p>
-            <LaneSelect
-              label="Yours"
-              ids={yours}
-              value={lanes[index].yours}
-              byId={byId}
-              onChange={(id) => onAssign(index, "yours", id)}
-            />
-            <LaneSelect
-              label="Theirs"
-              ids={theirs}
-              value={lanes[index].theirs}
-              byId={byId}
-              onChange={(id) => onAssign(index, "theirs", id)}
-            />
-          </div>
-        ))}
+        {LANE_NAMES.map((name, index) => {
+          const note = laneNote(score, lanes[index], byId);
+          return (
+            <div key={name} className="grid gap-2 sm:grid-cols-[7rem_1fr_1fr] sm:items-start">
+              <p className="pt-7 text-sm font-medium text-amber">{name}</p>
+              <LaneSelect
+                label="Yours"
+                ids={yours}
+                value={lanes[index].yours}
+                byId={byId}
+                onChange={(id) => onAssign(index, "yours", id)}
+              />
+              <LaneSelect
+                label="Theirs"
+                ids={theirs}
+                value={lanes[index].theirs}
+                byId={byId}
+                onChange={(id) => onAssign(index, "theirs", id)}
+              />
+              {note ? <p className="text-pretty text-sm text-muted sm:col-span-3">{note}</p> : null}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
+}
+
+function laneNote(
+  score: Score,
+  lane: LaneSlots,
+  byId: Map<number, { id: number; name: string }>,
+) {
+  if (lane.yours.length !== 2 || lane.theirs.length !== 2) return null;
+  const names = (ids: number[]) =>
+    [...ids]
+      .sort((a, b) => a - b)
+      .map((id) => byId.get(id)?.name ?? id)
+      .join(" + ");
+  const label = `${names(lane.yours)} vs ${names(lane.theirs)}`;
+  const part = score.parts.find((row) => row.kind === "lane" && row.label === label);
+  if (!part || part.matches <= 0) return "Not in the lane table, so this street adds nothing.";
+  const seen = `Won ${pct(part.observed)} over ${part.matches.toLocaleString()} streets, against ${pct(part.predicted)} already predicted by the heroes.`;
+  if (Math.abs(part.leftover) < 0.005) return `${seen} That gap is inside the noise, so it adds nothing.`;
+  return `${seen} Kept ${signedPoints(part.marginal)}.`;
 }
 
 function LaneSelect({
@@ -427,34 +454,106 @@ function LaneSelect({
   byId: Map<number, { id: number; name: string }>;
   onChange: (id: number) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const chosen = value
+    .map((id) => byId.get(id))
+    .filter((hero): hero is { id: number; name: string } => Boolean(hero));
+  const choices = ids
+    .filter((id) => !value.includes(id))
+    .map((id) => byId.get(id))
+    .filter((hero): hero is { id: number; name: string } => Boolean(hero))
+    .filter((hero) => heroSearchRank(hero.name, query, hero.id) !== null)
+    .sort(compareHeroSearch(query));
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   return (
-    <label className="grid gap-1 text-sm text-muted">
-      {label}
-      <select
-        value=""
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
-      >
-        <option value="">{value.length ? value.map((id) => byId.get(id)?.name ?? id).join(" + ") : "Add a hero"}</option>
-        {value
-          .slice()
-          .sort((a, b) => compareHeroNames(byId.get(a)?.name ?? "", byId.get(b)?.name ?? ""))
-          .map((id) => (
-          <option key={`out-${id}`} value={-id}>
-            Remove {byId.get(id)?.name ?? id}
-          </option>
+    <div ref={rootRef} className="relative grid gap-1">
+      <p className="text-sm text-muted">{label}</p>
+      <div className="grid gap-1">
+        {chosen.map((hero) => (
+          <button
+            key={hero.id}
+            type="button"
+            onClick={() => onChange(-hero.id)}
+            className="flex min-h-11 items-center justify-between gap-2 rounded-card bg-bg px-2 text-left"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <HeroPortrait id={hero.id} name={hero.name} />
+              <span className="truncate text-sm text-fg">{hero.name}</span>
+            </span>
+            <X className="size-4 shrink-0 text-muted" aria-hidden />
+          </button>
         ))}
-        {ids
-          .filter((id) => !value.includes(id))
-          .slice()
-          .sort((a, b) => compareHeroNames(byId.get(a)?.name ?? "", byId.get(b)?.name ?? ""))
-          .map((id) => (
-            <option key={id} value={id}>
-              {byId.get(id)?.name ?? id}
-            </option>
-          ))}
-      </select>
-    </label>
+        {value.length < 2 ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            disabled={ids.length === 0}
+            onClick={() => {
+              setQuery("");
+              setOpen((current) => !current);
+            }}
+            className="min-h-11 rounded-card border border-dashed border-line px-3 text-left text-sm text-muted disabled:cursor-not-allowed"
+          >
+            {ids.length === 0 ? "Pick this side first" : "Choose a hero"}
+          </button>
+        ) : null}
+      </div>
+      {open && ids.length > 0 ? (
+        <div className="absolute inset-x-0 top-full z-30 mt-1 rounded-card border border-amber bg-bg shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+          <label className="flex items-center gap-2 border-b border-line px-3">
+            <Search className="size-4 text-muted" aria-hidden />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search"
+              aria-label={`Search ${label} lane heroes`}
+              className="min-h-11 w-full bg-transparent text-sm text-fg outline-none placeholder:text-muted"
+            />
+          </label>
+          {choices.length === 0 ? (
+            <p className="px-3 py-3 text-sm text-muted">No heroes match.</p>
+          ) : (
+            <ul className="max-h-60 overflow-y-auto p-1">
+              {choices.map((hero) => (
+                <li key={hero.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(hero.id);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    className="flex min-h-11 w-full items-center gap-2 rounded-card px-2 text-left hover:bg-raised"
+                  >
+                    <HeroPortrait id={hero.id} name={hero.name} />
+                    <span className="truncate text-sm text-fg">{hero.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -713,8 +812,8 @@ function readPart(part: ScorePart) {
     if (part.matches <= 0) {
       return {
         who: "Lane",
-        math: "no duo-versus-duo sample of 80",
-        say: "This street is not in the table, so it adds nothing. Solo lanes are excluded.",
+        math: "not in the lane table",
+        say: "These four have not shared a street at least 30 times in this window, so the street adds nothing.",
       };
     }
     return {
