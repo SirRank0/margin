@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { abilityOrders } from "@/data/ability-orders";
 import { dataWindow } from "@/data/data-window";
 import { buildPath, MIN_BRANCH, type Click } from "@/lib/ability-path";
 import { compareHeroNames } from "@/lib/hero-order";
 import { HeroPortrait } from "@/components/hero-portrait";
+import { AbilityTip } from "@/components/ability-card";
 import { wilson } from "@/lib/odds";
 
 function pct(value: number) {
@@ -35,9 +36,42 @@ export function AbilityPathSection() {
   const [heroId, setHeroId] = useState(heroes.find((hero) => hero.id === 84)?.id ?? heroes[0]?.id ?? 0);
   const hero = heroes.find((row) => row.id === heroId) ?? heroes[0];
   const path = useMemo(() => (hero ? buildPath(hero) : null), [hero]);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const [pinKey, setPinKey] = useState<string | null>(null);
+  const rows = useRef(new Map<string, HTMLLIElement>());
+  const hideTimer = useRef(0);
   if (!hero || !path) return null;
   const names = new Map(hero.abilities.map((ability) => [ability.id, ability.name]));
   const overall = wilson(hero.wins, hero.matches);
+  const activeKey = hoverKey ?? pinKey;
+  const activeIndex = path.clicks.findIndex((click, index) => `${click.ability}-${click.rank}-${index}` === activeKey);
+  const active = activeIndex >= 0 ? path.clicks[activeIndex] : null;
+  const activeName = active ? names.get(active.ability) : undefined;
+  const activeRow = activeKey ? rows.current.get(activeKey) : undefined;
+
+  function show(key: string) {
+    window.clearTimeout(hideTimer.current);
+    setHoverKey(key);
+  }
+  function hideSoon() {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setHoverKey(null), 160);
+  }
+
+  useEffect(() => {
+    if (!pinKey) return;
+    const pinned = pinKey;
+    function onDocClick(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      const row = rows.current.get(pinned);
+      const tip = document.querySelector('[role="tooltip"]');
+      if (row?.contains(target) || tip?.contains(target)) return;
+      setPinKey(null);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, [pinKey]);
 
   return (
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
@@ -83,19 +117,47 @@ export function AbilityPathSection() {
         {abilityOrders.fetchedAt.slice(0, 10)}
       </p>
       <ol className="mt-4 grid gap-2 sm:grid-cols-2">
-        {path.clicks.map((click, index) => (
-          <li
-            key={`${click.ability}-${click.rank}-${index}`}
-            className="flex min-h-11 items-center justify-between gap-3 rounded-card border border-line bg-raised px-3 text-sm"
-          >
-            <span className="text-muted tabular-nums">{index + 1}</span>
-            <span className="min-w-0 flex-1 truncate text-fg">{names.get(click.ability)}</span>
-            <span className="tabular-nums text-amber" title={rankTitle(click.rank)}>
-              {rankLabel(click.rank)}
-            </span>
-          </li>
-        ))}
+        {path.clicks.map((click, index) => {
+          const abilityName = names.get(click.ability) ?? "Unknown";
+          const key = `${click.ability}-${click.rank}-${index}`;
+          return (
+            <li
+              key={key}
+              ref={(node) => {
+                if (node) rows.current.set(key, node);
+                else rows.current.delete(key);
+              }}
+              tabIndex={0}
+              onMouseEnter={() => show(key)}
+              onMouseLeave={hideSoon}
+              onFocus={() => show(key)}
+              onBlur={hideSoon}
+              onClick={() => setPinKey((current) => (current === key ? null : key))}
+              title="Click to pin this ability card"
+              className={`flex min-h-11 cursor-help items-center justify-between gap-3 rounded-card border px-3 text-sm outline-none focus-visible:border-amber ${
+                key === pinKey ? "border-amber bg-amber/5 ring-1 ring-amber/40" : "border-line bg-raised"
+              }`}
+            >
+              <span className="text-muted tabular-nums">{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-fg">{abilityName}</span>
+              <span className="tabular-nums text-amber" title={rankTitle(click.rank)}>
+                {rankLabel(click.rank)}
+              </span>
+            </li>
+          );
+        })}
       </ol>
+      {active && activeName && activeRow && (
+        <AbilityTip
+          target={activeRow}
+          name={activeName}
+          rank={active.rank}
+          pinned={pinKey === activeKey}
+          onTogglePin={() => setPinKey((current) => (current === activeKey ? null : activeKey))}
+          onEnter={() => show(activeKey!)}
+          onLeave={hideSoon}
+        />
+      )}
       <div className="mt-4 grid gap-3">
         {path.decisions.map((decision) => {
           const chosen = wilson(decision.chosen.wins, decision.chosen.matches);
