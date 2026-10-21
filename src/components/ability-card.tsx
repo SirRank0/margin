@@ -425,6 +425,8 @@ export function AbilityCardView({ card, rank }: { card: AbilityCard; rank: Abili
 
 export function AbilityTip({
   target,
+  row,
+  list,
   name,
   rank,
   pinned = false,
@@ -433,6 +435,8 @@ export function AbilityTip({
   onLeave,
 }: {
   target: HTMLElement;
+  row?: HTMLElement | null;
+  list?: HTMLElement | null;
   name: string;
   rank: AbilityRank;
   pinned?: boolean;
@@ -442,49 +446,104 @@ export function AbilityTip({
 }) {
   const card = abilityCards[name];
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: 8, top: 8, width: 420, maxHeight: 640, ready: false });
+  const [pos, setPos] = useState({ left: 8, top: 8, width: 420, maxHeight: 640, ready: false, overlaps: false });
 
   useLayoutEffect(() => {
     if (!card) return;
     function place() {
       const node = ref.current;
       if (!node) return;
+      const hovered = (row ?? target).getBoundingClientRect();
       const anchor = target.getBoundingClientRect();
+      const listBox = (list ?? target).getBoundingClientRect();
       const margin = 8;
+      const gap = 8;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const width = Math.min(420, vw - margin * 2);
-      const mid = anchor.left + anchor.width / 2;
-      let left = mid < vw / 2 ? vw - width - margin : margin;
+      const spaceListLeft = hovered.left - listBox.left;
+      const spaceListRight = listBox.right - hovered.right;
+      const otherIsRight = spaceListRight >= spaceListLeft;
+      const otherSpace = Math.max(spaceListRight, spaceListLeft);
+      const singleColumn = otherSpace < 80;
+
+      let left = margin;
       let top = margin;
+      let width = Math.min(420, vw - margin * 2);
       let maxHeight = vh - margin * 2;
-      const coversRow = left < anchor.right - 4 && left + width > anchor.left + 4;
-      if (coversRow) {
-        const spaceBelow = vh - anchor.bottom - margin;
-        const spaceAbove = anchor.top - margin;
-        left = margin;
-        if (spaceBelow >= spaceAbove) {
-          top = anchor.bottom + margin;
-          maxHeight = Math.max(160, spaceBelow);
+
+      const beside = () => {
+        if (otherIsRight) {
+          const start = hovered.right + gap;
+          const end = Math.min(listBox.right, vw - margin);
+          width = Math.min(420, end - start);
+          left = start;
         } else {
-          maxHeight = Math.max(160, spaceAbove);
-          top = Math.max(margin, anchor.top - maxHeight - margin);
+          const end = hovered.left - gap;
+          const start = Math.max(listBox.left, margin);
+          width = Math.min(420, end - start);
+          left = end - width;
         }
-      } else {
-        top = Math.max(margin, Math.min(anchor.top, vh - margin - 160));
+        top = anchor.top;
+        if (top < margin) top = margin;
+        if (top > vh - margin - 180) top = Math.max(margin, vh - margin - 180);
         maxHeight = vh - top - margin;
+      };
+
+      const stack = () => {
+        width = Math.min(420, vw - margin * 2);
+        left = Math.max(margin, Math.min(hovered.left, vw - width - margin));
+        const spaceBelow = vh - hovered.bottom - gap - margin;
+        const spaceAbove = hovered.top - gap - margin;
+        if (spaceBelow >= spaceAbove) {
+          top = hovered.bottom + gap;
+          maxHeight = Math.max(120, spaceBelow);
+        } else {
+          maxHeight = Math.max(120, spaceAbove);
+          top = Math.max(margin, hovered.top - gap - maxHeight);
+        }
+      };
+
+      let stacked = singleColumn;
+      if (!singleColumn) beside();
+      else stack();
+
+      if (width < 180) {
+        stack();
+        stacked = true;
       }
+
+      if (!stacked && otherIsRight) left = Math.max(left, hovered.right + gap);
+      else if (!stacked) left = Math.min(left, hovered.left - gap - width);
+      else left = Math.max(margin, Math.min(left, vw - width - margin));
+      if (top < margin) top = margin;
+      maxHeight = Math.max(120, Math.min(maxHeight, vh - top - margin));
+
+      const hitsRow = () =>
+        left < hovered.right - 1 &&
+        left + width > hovered.left + 1 &&
+        top < hovered.bottom - 1 &&
+        top + maxHeight > hovered.top + 1;
+
+      if (hitsRow()) {
+        stack();
+        stacked = true;
+        left = Math.max(margin, Math.min(left, vw - width - margin));
+        maxHeight = Math.max(120, Math.min(maxHeight, vh - top - margin));
+      }
+
+      const overlaps = stacked || hitsRow();
       setPos((current) => {
         if (
           current.ready &&
           current.left === left &&
           current.top === top &&
           current.width === width &&
-          current.maxHeight === maxHeight
+          current.maxHeight === maxHeight &&
+          current.overlaps === overlaps
         ) {
           return current;
         }
-        return { left, top, width, maxHeight, ready: true };
+        return { left, top, width, maxHeight, ready: true, overlaps };
       });
     }
     place();
@@ -498,7 +557,7 @@ export function AbilityTip({
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
     };
-  }, [card, target, name, rank]);
+  }, [card, target, row, list, name, rank]);
 
   if (!card || typeof document === "undefined") return null;
   return createPortal(
@@ -514,7 +573,7 @@ export function AbilityTip({
         maxHeight: pos.maxHeight,
         visibility: pos.ready ? "visible" : "hidden",
       }}
-      className="fixed z-[80] overflow-y-auto overscroll-contain"
+      className={`fixed z-[80] overflow-y-auto overscroll-contain ${pinned || !pos.overlaps ? "" : "pointer-events-none"}`}
     >
       <div className="relative">
         <AbilityCardView key={name} card={card} rank={rank} />

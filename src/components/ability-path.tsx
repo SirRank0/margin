@@ -39,6 +39,7 @@ export function AbilityPathSection() {
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [pinKey, setPinKey] = useState<string | null>(null);
   const rows = useRef(new Map<string, HTMLLIElement>());
+  const listRef = useRef<HTMLOListElement>(null);
   const hideTimer = useRef(0);
   if (!hero || !path) return null;
   const names = new Map(hero.abilities.map((ability) => [ability.id, ability.name]));
@@ -48,6 +49,9 @@ export function AbilityPathSection() {
   const active = activeIndex >= 0 ? path.clicks[activeIndex] : null;
   const activeName = active ? names.get(active.ability) : undefined;
   const activeRow = activeKey ? rows.current.get(activeKey) : undefined;
+  const firstKey = path.clicks.length > 0 ? `${path.clicks[0].ability}-${path.clicks[0].rank}-0` : null;
+  const firstRow = firstKey ? rows.current.get(firstKey) : undefined;
+  const placeTarget = firstRow ?? activeRow;
 
   function show(key: string) {
     window.clearTimeout(hideTimer.current);
@@ -116,7 +120,7 @@ export function AbilityPathSection() {
         {pct(overall.p)} ({pct(overall.low)}–{pct(overall.high)}) · {compact(hero.matches)} games ·{" "}
         {abilityOrders.fetchedAt.slice(0, 10)}
       </p>
-      <ol className="mt-4 grid gap-2 sm:grid-cols-2">
+      <ol ref={listRef} className="mt-4 grid gap-2 sm:grid-cols-2">
         {path.clicks.map((click, index) => {
           const abilityName = names.get(click.ability) ?? "Unknown";
           const key = `${click.ability}-${click.rank}-${index}`;
@@ -147,9 +151,11 @@ export function AbilityPathSection() {
           );
         })}
       </ol>
-      {active && activeName && activeRow && (
+      {active && activeName && activeRow && placeTarget && (
         <AbilityTip
-          target={activeRow}
+          target={placeTarget}
+          row={activeRow}
+          list={listRef.current}
           name={activeName}
           rank={active.rank}
           pinned={pinKey === activeKey}
