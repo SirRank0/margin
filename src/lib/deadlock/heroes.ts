@@ -47,7 +47,7 @@ export const HEROES: Hero[] = [
   { id: 27, name: "Yamato", released: true },
   { id: 88, name: "Baba", released: true },
   { id: 78, name: "Deadman Danny", released: true },
-  { id: 87, name: "Nurse Harrow", released: false },
+  { id: 87, name: "Nurse Harrow", released: true },
   { id: 85, name: "Solomon", released: true },
   { id: 86, name: "Violet", released: true },
 ];

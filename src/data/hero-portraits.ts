@@ -56,6 +56,7 @@ export const heroPortraits: Record<number, HeroShot> = {
   66: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/frank_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/frank_card.webp" }, // Victor
   3: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/hornet_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/hornet_card.webp" }, // Vindicta
   86: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/artist_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/artist_card.webp" }, // Violet
+  87: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/nurse_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/nurse_card.webp" }, // Nurse Harrow
   35: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/viscous_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/viscous_card.webp" }, // Viscous
   58: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/kali_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/kali_card.webp" }, // Vyper
   25: { icon: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/warden_sm.webp", card: "https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/warden_card.webp" }, // Warden

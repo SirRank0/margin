@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HEROES } from "./deadlock/heroes.ts";
-import { assignNamedTeams, matchHeroName, readTeams, type RgbImage } from "./screenshot-teams.ts";
+import { assignNamedTeams, chooseRowHero, findHeroNameRows, indexFace, matchFace, matchHeroName, portraitId, readTeams, type RgbImage } from "./screenshot-teams.ts";
 
 function image(w: number, h: number, paint: (x: number, y: number) => [number, number, number]): RgbImage {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -78,6 +78,9 @@ test("scoreboard text maps to the hero, including a one-letter miss", () => {
     "@' Deadman Danny (A",
     "ey Kelvin Ll LL",
     "Billy ses",
+    "WY Lay ceist",
+    "NW Lay cist",
+    "WU Cay ceist",
   ];
   const ids = lines.map((line) => matchHeroName(line, HEROES));
   assert.deepEqual(
@@ -95,6 +98,9 @@ test("scoreboard text maps to the hero, including a one-letter miss", () => {
       "Deadman Danny",
       "Kelvin",
       "Billy",
+      "Lady Geist",
+      "Lady Geist",
+      "Lady Geist",
     ],
   );
 });
@@ -109,4 +115,92 @@ test("the highlighted scoreboard team is yours", () => {
   const teams = assignNamedTeams(rows);
   assert.deepEqual(teams.yours, [81, 65]);
   assert.deepEqual(teams.theirs, [86, 76]);
+});
+
+test("a pause-screen row keeps the hero line, not the player name", () => {
+  const heroes = [
+    { id: 63, name: "Mina" },
+    { id: 76, name: "Graves" },
+    { id: 12, name: "Kelvin" },
+    { id: 13, name: "Haze" },
+    { id: 86, name: "Violet" },
+  ];
+  const id = chooseRowHero(
+    [
+      { text: "Wehzley", luma: 180 },
+      { text: "Graves Level -1", luma: 90 },
+    ],
+    heroes,
+  );
+  assert.equal(id, 76);
+  const tagged = chooseRowHero(
+    [
+      { text: "Mina", luma: 200 },
+      { text: "Graves Level", luma: 80 },
+    ],
+    heroes,
+  );
+  assert.equal(tagged, 76);
+  const scoreboard = chooseRowHero(
+    [
+      { text: "Butter", luma: 200 },
+      { text: "Violet", luma: 90 },
+    ],
+    heroes,
+  );
+  assert.equal(scoreboard, 86);
+  const sameWord = chooseRowHero(
+    [
+      { text: "Haze", luma: 200 },
+      { text: "Kelvin", luma: 80 },
+    ],
+    heroes,
+  );
+  assert.equal(sameWord, 12);
+});
+
+test("a team title does not count as a hero", () => {
+  assert.equal(matchHeroName("ArchMother Victorious", HEROES), null);
+  assert.equal(matchHeroName("Hidden King", HEROES), null);
+  assert.equal(HEROES.find((hero) => hero.id === matchHeroName("C RatKing", HEROES))?.name, "Rat King");
+});
+
+test("a team list on the right is found from the row bars, not a fixed side", () => {
+  const shot = image(400, 430, () => [6, 6, 8]);
+  for (const y0 of [30, 76, 122, 168, 230, 276, 322, 368]) {
+    for (let y = y0; y < y0 + 40; y++) {
+      for (let x = 280; x < 390; x++) {
+        const i = (y * shot.w + x) * 4;
+        shot.data[i] = 48;
+        shot.data[i + 1] = 50;
+        shot.data[i + 2] = 56;
+      }
+    }
+  }
+  const rows = findHeroNameRows(shot);
+  assert.equal(rows.length, 8);
+  assert.ok(rows.every((row) => row.x > shot.w / 2));
+});
+
+test("a clear portrait fills a blank name and does not replace a read name", () => {
+  const sure = { id: 4, score: 0.91, runner: 0.5, x: 0, y: 0, size: 40 };
+  const soft = { id: 4, score: 0.8, runner: 0.55, x: 0, y: 0, size: 40 };
+  const fill = { id: 4, score: 0.86, runner: 0.6, x: 0, y: 0, size: 40 };
+  const weak = { id: 4, score: 0.6, runner: 0.2, x: 0, y: 0, size: 40 };
+  assert.equal(portraitId(sure, 13), 4);
+  assert.equal(portraitId(soft, 13), 13);
+  assert.equal(portraitId(soft, null), null);
+  assert.equal(portraitId(fill, null), 4);
+  assert.equal(portraitId(weak, null), null);
+  assert.equal(portraitId(null, 13), 13);
+});
+
+test("a painted icon matches itself and not the other icon", () => {
+  const geist = image(48, 48, (x, y) => [40 + x * 3, 180 - y * 2, 70]);
+  const haze = image(48, 48, (x, y) => [20, 40 + y * 4, 220 - x * 3]);
+  const faces = [indexFace(4, geist), indexFace(13, haze)].filter((face) => face !== null);
+  const hit = matchFace(geist, 0, 0, 48, faces);
+  assert.ok(hit);
+  assert.equal(hit.id, 4);
+  assert.ok(hit.score - hit.runner >= 0.22);
 });

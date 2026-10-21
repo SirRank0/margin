@@ -2,14 +2,22 @@ import { useEffect, useState } from "react";
 import { HeroPortrait } from "@/components/hero-portrait";
 import {
   assignNamedTeams,
+  chooseRowHero,
   findHeroNameRows,
+  indexFace,
   matchHeroName,
+  portraitId,
+  readPortraitColumn,
+  type FaceHit,
+  type FaceRef,
   type NameCrop,
   type RgbImage,
   type TeamRead,
 } from "@/lib/screenshot-teams";
 
 type Hero = { id: number; name: string };
+
+const faceCache = new Map<number, Promise<FaceRef | null>>();
 
 export function ScreenshotTeams({
   heroes,
@@ -41,20 +49,45 @@ export function ScreenshotTeams({
     }
     setBusy(true);
     setRead(null);
-    setStatus("Reading names…");
+    setStatus("Matching the portraits beside the names…");
     try {
-      const shot = await loadShot(file);
+      const [shot, faces] = await Promise.all([loadShot(file), loadFaces(heroes)]);
       const rows = findHeroNameRows(shot);
       if (rows.length === 0) {
-        setStatus("No hero names found. Use the scoreboard. The top-bar circles are not read, because a skin does not match the hero picture.");
+        setStatus(
+          "No team list in that shot. Use the scoreboard or the pause-screen list. The in-game top bar is a skin, so those circles are not matched.",
+        );
         return;
       }
-      const named: { id: number; anchor: number; luma: number }[] = [];
-      for (let i = 0; i < rows.length; i++) {
-        setStatus(`Reading name ${i + 1} of ${rows.length}…`);
-        const text = await readLine(shot, rows[i]);
-        const id = matchHeroName(text, heroes);
-        if (id !== null) named.push({ id, anchor: rows[i].anchor, luma: rows[i].luma });
+      const groups = groupRows(rows);
+      await frame();
+      const portraits = readPortraitColumn(
+        shot,
+        groups.map((group) => group[0].anchor),
+        groups.map((group) => group[0].x),
+        faces,
+      );
+      const named: { id: number | null; anchor: number; luma: number }[] = [];
+      for (let i = 0; i < groups.length; i++) {
+        const face = portraits[i];
+        let readId: number | null = null;
+        if (!unmistakable(face)) {
+          setStatus(`Reading name ${i + 1} of ${groups.length}…`);
+          const reads: { text: string; luma: number }[] = [];
+          for (let j = 0; j < groups[i].length; j++) {
+            const line = groups[i][j];
+            let text = await readLine(shot, line);
+            const last = j === groups[i].length - 1;
+            if (last && matchHeroName(text, heroes) === null) text = await readLine(shot, line, 8);
+            reads.push({ text, luma: line.luma });
+          }
+          readId = chooseRowHero(reads, heroes);
+        }
+        named.push({
+          id: portraitId(face, readId),
+          anchor: groups[i][0].anchor,
+          luma: groups[i][0].luma,
+        });
       }
       const next = assignNamedTeams(named);
       const found = next.yours.length + next.theirs.length;
@@ -63,8 +96,11 @@ export function ScreenshotTeams({
         return;
       }
       setRead({ ...next, hits: [] });
+      const fromPictures = named.filter((row, index) => row.id !== null && unmistakable(portraits[index])).length;
       setStatus(
-        `Read ${found} heroes from the names. Your side is the highlighted row's team. Swap on the page if that is backwards.`,
+        fromPictures > 0
+          ? `Read ${found} heroes. ${fromPictures} came from the portrait next to the name, including any name the text missed. Your side is the highlighted row. Swap on the page if that is backwards.`
+          : `Read ${found} heroes from the names. Your side is the highlighted row's team. Swap on the page if that is backwards.`,
       );
     } catch {
       setStatus("Could not read that image.");
@@ -77,9 +113,10 @@ export function ScreenshotTeams({
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
       <h2 className="font-display text-2xl text-fg">Read a screenshot</h2>
       <p className="mt-3 max-w-2xl text-pretty text-sm text-muted">
-        Paste the scoreboard. The page reads the hero name under each player and fills both
-        sides. Your side is the team with the highlighted row. It does not read the in-game top
-        bar: those circles, especially with a skin, do not match the hero pictures.
+        Paste the scoreboard, or the team list on the pause screen. The portrait beside each name is
+        matched to the hero, and the printed name is used when that picture is not clear. A lit row
+        marks your side. The in-game top bar is skipped, because those circles follow the equipped
+        skin and are not the hero icon.
       </p>
       <label
         className="mt-4 flex min-h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-card border border-dashed border-line px-4 py-4 text-center text-sm text-muted"
@@ -122,6 +159,24 @@ export function ScreenshotTeams({
   );
 }
 
+function unmistakable(hit: FaceHit | null): boolean {
+  return hit !== null && hit.score >= 0.88 && hit.score - hit.runner >= 0.22;
+}
+
+function groupRows(rows: NameCrop[]) {
+  const groups: NameCrop[][] = [];
+  for (const row of rows) {
+    const last = groups[groups.length - 1];
+    if (last && last[0].anchor === row.anchor) last.push(row);
+    else groups.push([row]);
+  }
+  return groups;
+}
+
+function frame() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function SideLine({
   title,
   ids,
@@ -159,6 +214,38 @@ function imageFile(data: DataTransfer | null): File | undefined {
   }
 }
 
+async function loadFaces(heroes: Hero[]) {
+  const loaded = await Promise.all(heroes.map((hero) => loadFace(hero.id)));
+  return loaded.filter((face): face is FaceRef => face !== null);
+}
+
+function loadFace(id: number): Promise<FaceRef | null> {
+  const cached = faceCache.get(id);
+  if (cached) return cached;
+  const pending = readFace(id);
+  faceCache.set(id, pending);
+  return pending;
+}
+
+async function readFace(id: number): Promise<FaceRef | null> {
+  const response = await fetch(`/heroes/${id}.webp`);
+  if (!response.ok) return null;
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    bitmap.close();
+    return null;
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return indexFace(id, { w: canvas.width, h: canvas.height, data: pixels.data });
+}
+
 async function loadShot(file: File): Promise<RgbImage> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
@@ -175,50 +262,50 @@ async function loadShot(file: File): Promise<RgbImage> {
   return { w, h, data: pixels.data };
 }
 
-async function readLine(shot: RgbImage, row: NameCrop) {
-  const canvas = lineCanvas(shot, row);
+async function readLine(shot: RgbImage, row: NameCrop, scale = 5) {
+  const canvas = lineCanvas(shot, row, scale);
   const worker = await names();
   const read = await worker.recognize(canvas);
   return read.data.text;
 }
 
-function lineCanvas(shot: RgbImage, row: NameCrop) {
-  const scale = 4;
+function lineCanvas(shot: RgbImage, row: NameCrop, scale = 5) {
+  const pad = 40;
   const canvas = document.createElement("canvas");
-  canvas.width = row.w * scale;
-  canvas.height = row.h * scale;
+  canvas.width = row.w * scale + pad * 2;
+  canvas.height = row.h * scale + pad * 2;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("canvas");
   const image = ctx.createImageData(row.w, row.h);
   let lo = 255;
   let hi = 0;
+  const samples: number[] = [];
   for (let y = 0; y < row.h; y++) {
     for (let x = 0; x < row.w; x++) {
       const from = ((row.y + y) * shot.w + row.x + x) * 4;
       const luma = (shot.data[from] + shot.data[from + 1] + shot.data[from + 2]) / 3;
+      samples.push(luma);
       if (luma < lo) lo = luma;
       if (luma > hi) hi = luma;
     }
   }
   const span = Math.max(1, hi - lo);
-  for (let y = 0; y < row.h; y++) {
-    for (let x = 0; x < row.w; x++) {
-      const from = ((row.y + y) * shot.w + row.x + x) * 4;
-      const luma = (shot.data[from] + shot.data[from + 1] + shot.data[from + 2]) / 3;
-      const ink = 255 - Math.round(((luma - lo) / span) * 255);
-      const to = (y * row.w + x) * 4;
-      image.data[to] = ink;
-      image.data[to + 1] = ink;
-      image.data[to + 2] = ink;
-      image.data[to + 3] = 255;
-    }
+  for (let i = 0; i < samples.length; i++) {
+    const ink = 255 - Math.round(((samples[i] - lo) / span) * 255);
+    const to = i * 4;
+    image.data[to] = ink;
+    image.data[to + 1] = ink;
+    image.data[to + 2] = ink;
+    image.data[to + 3] = 255;
   }
   const source = document.createElement("canvas");
   source.width = row.w;
   source.height = row.h;
   source.getContext("2d")?.putImageData(image, 0, 0);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(source, pad, pad, row.w * scale, row.h * scale);
   return canvas;
 }
 
@@ -231,6 +318,7 @@ function names() {
     const worker = await createWorker("eng");
     await worker.setParameters({
       tessedit_pageseg_mode: PSM.SINGLE_LINE,
+      user_defined_dpi: "300",
       tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz &",
     });
     return worker;
