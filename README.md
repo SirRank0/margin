@@ -1,8 +1,8 @@
-# Margin
+# Deadlock Decoded
 
 Win rates for Deadlock public matches. Live at [sirrank0.github.io/margin](https://sirrank0.github.io/margin/).
 
-Margin is a static site that scores team compositions, ranks ability orders, and converts builds. Rates come from a saved snapshot of public matches since the current balance patch. The page does not call the Deadlock API on load.
+Deadlock Decoded is a static site that scores team compositions, ranks ability orders, and converts builds. Rates come from a saved snapshot of public matches since the current balance patch. The page does not call the Deadlock API on load.
 
 ## Features
 
