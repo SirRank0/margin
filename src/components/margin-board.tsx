@@ -78,19 +78,12 @@ function SiteNav({ tab, onChoose }: { tab: Tab; onChoose: (tab: Tab) => void }) 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-end sm:justify-between sm:px-6">
-        <a href="#odds" onClick={() => onChoose("odds")} className="flex items-center gap-2.5">
-          <svg viewBox="0 0 32 32" className="size-7 shrink-0" aria-hidden>
-            <circle cx="16" cy="16" r="12" fill="#f3ead7" />
-            <path d="M16 4v24M4 16h24M7.5 7.5l17 17M24.5 7.5l-17 17" stroke="#0c0b09" strokeWidth="1.6" />
-            <path d="M8.2 16c0-2.9 3.5-4.9 7.8-4.9s7.8 2 7.8 4.9-3.5 4.9-7.8 4.9-7.8-2-7.8-4.9z" fill="#0c0b09" />
-            <circle cx="16" cy="16" r="2.2" fill="#e0b15a" />
-          </svg>
-          <span className="font-display text-[0.95rem] leading-none tracking-[0.14em] uppercase sm:text-lg sm:tracking-[0.18em]">
-            <span className="text-amber">De</span>
-            <span className="text-fg">adlock </span>
-            <span className="text-amber">De</span>
-            <span className="text-fg">coded</span>
-          </span>
+        <a href="#odds" onClick={() => onChoose("odds")} className="flex items-center">
+          <img
+            src={`${import.meta.env.BASE_URL}logo.png`}
+            alt="Deadlock Decoded"
+            className="h-12 w-auto sm:h-14"
+          />
         </a>
         <nav aria-label="Sections" className="flex gap-1">
           {TABS.map((item) => {
