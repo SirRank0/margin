@@ -38,13 +38,23 @@ export function AbilityPathSection() {
   const path = useMemo(() => (hero ? buildPath(hero) : null), [hero]);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [pinKey, setPinKey] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [coarse, setCoarse] = useState(false);
   const rows = useRef(new Map<string, HTMLLIElement>());
   const listRef = useRef<HTMLOListElement>(null);
   const hideTimer = useRef(0);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 639px)");
+    const apply = () => setCoarse(query.matches);
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
   if (!hero || !path) return null;
   const names = new Map(hero.abilities.map((ability) => [ability.id, ability.name]));
   const overall = wilson(hero.wins, hero.matches);
-  const activeKey = hoverKey ?? pinKey;
+  const activeKey = coarse ? (openKey ?? pinKey) : (hoverKey ?? pinKey);
   const activeIndex = path.clicks.findIndex((click, index) => `${click.ability}-${click.rank}-${index}` === activeKey);
   const active = activeIndex >= 0 ? path.clicks[activeIndex] : null;
   const activeName = active ? names.get(active.ability) : undefined;
@@ -63,19 +73,20 @@ export function AbilityPathSection() {
   }
 
   useEffect(() => {
-    if (!pinKey) return;
-    const pinned = pinKey;
+    if (!pinKey && !openKey) return;
     function onDocClick(event: MouseEvent) {
       const target = event.target as Node | null;
       if (!target) return;
-      const row = rows.current.get(pinned);
       const tip = document.querySelector('[role="tooltip"]');
-      if (row?.contains(target) || tip?.contains(target)) return;
+      if (tip?.contains(target)) return;
+      // A tap on a row is handled by that row. Anything else dismisses.
+      if (listRef.current?.contains(target)) return;
       setPinKey(null);
+      setOpenKey(null);
     }
     document.addEventListener("click", onDocClick);
     return () => document.removeEventListener("click", onDocClick);
-  }, [pinKey]);
+  }, [pinKey, openKey]);
 
   return (
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
@@ -132,14 +143,33 @@ export function AbilityPathSection() {
                 else rows.current.delete(key);
               }}
               tabIndex={0}
-              onMouseEnter={() => show(key)}
-              onMouseLeave={hideSoon}
-              onFocus={() => show(key)}
-              onBlur={hideSoon}
-              onClick={() => setPinKey((current) => (current === key ? null : key))}
-              title="Click to pin this ability card"
+              onMouseEnter={() => {
+                if (!coarse) show(key);
+              }}
+              onMouseLeave={() => {
+                if (!coarse) hideSoon();
+              }}
+              onFocus={() => {
+                if (!coarse) show(key);
+              }}
+              onBlur={() => {
+                if (!coarse) hideSoon();
+              }}
+              onClick={() => {
+                if (coarse) {
+                  setOpenKey((current) => (current === key ? null : key));
+                  if (pinKey && pinKey !== key) setPinKey(null);
+                  return;
+                }
+                setPinKey((current) => (current === key ? null : key));
+              }}
+              title={coarse ? "Tap to open this ability card" : "Click to pin this ability card"}
               className={`flex min-h-11 cursor-help items-center justify-between gap-3 rounded-card border px-3 text-sm outline-none focus-visible:border-amber ${
-                key === pinKey ? "border-amber bg-amber/5 ring-1 ring-amber/40" : "border-line bg-raised"
+                key === pinKey
+                  ? "border-amber bg-amber/5 ring-1 ring-amber/40"
+                  : key === openKey
+                    ? "border-amber/60 bg-amber/5"
+                    : "border-line bg-raised"
               }`}
             >
               <span className="text-muted tabular-nums">{index + 1}</span>
@@ -160,6 +190,7 @@ export function AbilityPathSection() {
           rank={active.rank}
           pinned={pinKey === activeKey}
           onTogglePin={() => setPinKey((current) => (current === activeKey ? null : activeKey))}
+          onDismiss={coarse ? () => { setOpenKey(null); setPinKey(null); } : undefined}
           onEnter={() => show(activeKey!)}
           onLeave={hideSoon}
         />

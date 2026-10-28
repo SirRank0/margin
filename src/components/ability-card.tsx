@@ -431,6 +431,7 @@ export function AbilityTip({
   rank,
   pinned = false,
   onTogglePin,
+  onDismiss,
   onEnter,
   onLeave,
 }: {
@@ -441,25 +442,56 @@ export function AbilityTip({
   rank: AbilityRank;
   pinned?: boolean;
   onTogglePin?: () => void;
+  onDismiss?: () => void;
   onEnter?: () => void;
   onLeave?: () => void;
 }) {
   const card = abilityCards[name];
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ left: 8, top: 8, width: 420, maxHeight: 640, ready: false, overlaps: false });
+  const [pos, setPos] = useState({
+    left: 8,
+    top: 8,
+    width: 420,
+    maxHeight: 640,
+    ready: false,
+    overlaps: false,
+    sheet: false,
+  });
 
   useLayoutEffect(() => {
     if (!card) return;
     function place() {
       const node = ref.current;
       if (!node) return;
-      const hovered = (row ?? target).getBoundingClientRect();
-      const anchor = target.getBoundingClientRect();
-      const listBox = (list ?? target).getBoundingClientRect();
       const margin = 8;
       const gap = 8;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
+      // Narrow screens have no second column and no hover. Dock the card
+      // to the bottom so it never covers the row that opened it.
+      if (vw < 640) {
+        const width = vw - margin * 2;
+        const maxHeight = Math.round(vh * 0.55);
+        const top = vh - maxHeight - margin;
+        setPos((current) => {
+          if (
+            current.ready &&
+            current.sheet &&
+            current.left === margin &&
+            current.top === top &&
+            current.width === width &&
+            current.maxHeight === maxHeight
+          ) {
+            return current;
+          }
+          return { left: margin, top, width, maxHeight, ready: true, overlaps: false, sheet: true };
+        });
+        return;
+      }
+
+      const hovered = (row ?? target).getBoundingClientRect();
+      const anchor = target.getBoundingClientRect();
+      const listBox = (list ?? target).getBoundingClientRect();
       const spaceListLeft = hovered.left - listBox.left;
       const spaceListRight = listBox.right - hovered.right;
       const otherIsRight = spaceListRight >= spaceListLeft;
@@ -535,6 +567,7 @@ export function AbilityTip({
       setPos((current) => {
         if (
           current.ready &&
+          !current.sheet &&
           current.left === left &&
           current.top === top &&
           current.width === width &&
@@ -543,7 +576,7 @@ export function AbilityTip({
         ) {
           return current;
         }
-        return { left, top, width, maxHeight, ready: true, overlaps };
+        return { left, top, width, maxHeight, ready: true, overlaps, sheet: false };
       });
     }
     place();
@@ -573,22 +606,42 @@ export function AbilityTip({
         maxHeight: pos.maxHeight,
         visibility: pos.ready ? "visible" : "hidden",
       }}
-      className={`fixed z-[80] overflow-y-auto overscroll-contain ${pinned || !pos.overlaps ? "" : "pointer-events-none"}`}
+      className={`fixed z-[80] overflow-y-auto overscroll-contain ${
+        pos.sheet ? "rounded-t-card shadow-2xl" : ""
+      } ${pinned || pos.sheet || !pos.overlaps ? "" : "pointer-events-none"}`}
     >
       <div className="relative">
         <AbilityCardView key={name} card={card} rank={rank} />
-        {onTogglePin && (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onTogglePin();
-            }}
-            className="absolute right-2 top-2 z-10 rounded-md border border-[#5c5180] bg-[#1a1528]/90 px-2 py-1 text-[11px] font-medium text-[#e4dcf6] hover:bg-[#2a2438]"
-            title={pinned ? "Unpin" : "Pin this card"}
-          >
-            {pinned ? "Unpin" : "Pin"}
-          </button>
+        {(onDismiss || onTogglePin) && (
+          <div className="absolute right-2 top-2 z-10 flex gap-1.5">
+            {onDismiss && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDismiss();
+                }}
+                className="min-h-11 rounded-md border border-[#5c5180] bg-[#1a1528]/90 px-3 text-sm font-medium text-[#e4dcf6]"
+              >
+                Close
+              </button>
+            )}
+            {onTogglePin && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTogglePin();
+                }}
+                className={`rounded-md border border-[#5c5180] bg-[#1a1528]/90 font-medium text-[#e4dcf6] hover:bg-[#2a2438] ${
+                  pos.sheet ? "min-h-11 px-3 text-sm" : "px-2 py-1 text-[11px]"
+                }`}
+                title={pinned ? "Unpin" : "Pin this card"}
+              >
+                {pinned ? "Unpin" : "Pin"}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>,
