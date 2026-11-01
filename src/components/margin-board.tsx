@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
+import { LaneAnalyzer } from "@/components/lane-analyzer";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { ScreenshotTeams } from "@/components/screenshot-teams";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
@@ -15,6 +16,7 @@ const LANE_NAMES = ["York", "Broadway", "Greenwich"] as const;
 const TABS = [
   { id: "odds", label: "Comp odds" },
   { id: "order", label: "Ability order" },
+  { id: "lane", label: "Lane" },
   { id: "courier", label: "Build courier" },
 ] as const;
 
@@ -63,6 +65,11 @@ export function MarginBoard() {
       {tab === "order" ? (
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
           <AbilityPathSection />
+        </main>
+      ) : null}
+      {tab === "lane" ? (
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+          <LaneAnalyzer />
         </main>
       ) : null}
       {tab === "courier" ? (

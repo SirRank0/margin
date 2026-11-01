@@ -13,6 +13,9 @@
   --color-ink: #1a1408;
   --color-ally: #e0b15a;
   --color-enemy: #6a9ec0;
+  --color-weapon: #ffb14a;
+  --color-vitality: #7dce4a;
+  --color-spirit: #c9a0ff;
   --radius-card: 0.35rem;
 }
 
