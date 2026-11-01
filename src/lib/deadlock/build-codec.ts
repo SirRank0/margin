@@ -232,3 +232,179 @@ export function applySkillOrder(decoded: Uint8Array, clicks: SkillClick[]): Uint
     ),
   );
 }
+
+function encodeString(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function encodeFloat(value: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setFloat32(0, value, true);
+  return bytes;
+}
+
+export type BuildColumn = {
+  name: string;
+  itemIds: number[];
+};
+
+/**
+ * A build the game can import. Field numbers match CMsgHeroBuild:
+ * hero id 2, name 5, details 10. Details hold the shop columns and the
+ * ability-point order.
+ */
+export function encodeHeroBuild(input: {
+  heroId: number;
+  name: string;
+  columns: BuildColumn[];
+  clicks: SkillClick[];
+}): Uint8Array {
+  if (!Number.isInteger(input.heroId) || input.heroId < 1 || input.heroId > 255) {
+    throw new BuildCodecError("Pick a hero before copying a build.");
+  }
+  const categories = input.columns.map((column) => {
+    const mods = column.itemIds.map((id) => {
+      if (!Number.isSafeInteger(id) || id < 1) throw new BuildCodecError("That item isn't a shop item.");
+      return encodeMessage([{ field: 1, wire: 0, value: id }]);
+    });
+    const fields: Field[] = mods.map((bytes) => ({ field: 1, wire: 2, bytes }));
+    fields.push({ field: 2, wire: 2, bytes: encodeString(column.name) });
+    fields.push({ field: 4, wire: 5, bytes: encodeFloat(300) });
+    const height = Math.max(180, 88 + column.itemIds.length * 64);
+    fields.push({ field: 5, wire: 5, bytes: encodeFloat(height) });
+    return encodeMessage(fields);
+  });
+  const details = encodeMessage([
+    ...categories.map((bytes): Field => ({ field: 1, wire: 2, bytes })),
+    { field: 2, wire: 2, bytes: skillOrder(input.clicks) },
+  ]);
+  return encodeMessage([
+    { field: 2, wire: 0, value: input.heroId },
+    { field: 5, wire: 2, bytes: encodeString(input.name.trim().slice(0, 64)) },
+    { field: 10, wire: 2, bytes: details },
+  ]);
+}
+
+export type DecodedColumn = { name: string; itemIds: number[]; width: number; height: number };
+
+/** Read a build we encoded, so a copy can be checked before it leaves the browser. */
+export function readHeroBuild(decoded: Uint8Array): {
+  heroId: number;
+  name: string;
+  columns: DecodedColumn[];
+  clicks: SkillClick[];
+} {
+  const fields = parseMessage(decoded);
+  const hero = fields.find((entry): entry is VarintField => entry.field === 2 && entry.wire === 0);
+  const nameField = fields.find((entry): entry is BytesField => entry.field === 5 && entry.wire === 2);
+  const details = fields.find((entry): entry is BytesField => entry.field === 10 && entry.wire === 2);
+  if (!hero || !details) throw new BuildCodecError("This build is missing a hero or its items.");
+  const inner = parseMessage(details.bytes);
+  const columns = inner
+    .filter((entry): entry is BytesField => entry.field === 1 && entry.wire === 2)
+    .map(readColumn);
+  const order = inner.find((entry): entry is BytesField => entry.field === 2 && entry.wire === 2);
+  return {
+    heroId: hero.value,
+    name: nameField ? decodeName(nameField.bytes) : "",
+    columns,
+    clicks: order ? readClicks(order.bytes) : [],
+  };
+}
+
+function readColumn(entry: BytesField): DecodedColumn {
+  const fields = parseMessage(entry.bytes);
+  const itemIds = fields
+    .filter((field): field is BytesField => field.field === 1 && field.wire === 2)
+    .map((field) => {
+      const id = parseMessage(field.bytes).find(
+        (inner): inner is VarintField => inner.field === 1 && inner.wire === 0,
+      );
+      return id?.value ?? 0;
+    })
+    .filter((id) => id > 0);
+  const nameField = fields.find((field): field is BytesField => field.field === 2 && field.wire === 2);
+  const width = fields.find((field): field is BytesField => field.field === 4 && field.wire === 5);
+  const height = fields.find((field): field is BytesField => field.field === 5 && field.wire === 5);
+  return {
+    name: nameField ? decodeName(nameField.bytes) : "",
+    itemIds,
+    width: width ? new DataView(width.bytes.buffer, width.bytes.byteOffset, 4).getFloat32(0, true) : 0,
+    height: height ? new DataView(height.bytes.buffer, height.bytes.byteOffset, 4).getFloat32(0, true) : 0,
+  };
+}
+
+function readClicks(bytes: Uint8Array): SkillClick[] {
+  const clicks: SkillClick[] = [];
+  let i = 0;
+  while (i < bytes.length) {
+    const key = readPlainVarint(bytes, i);
+    const field = Math.floor(key.value / 8);
+    const wire = key.value % 8;
+    i = key.next;
+    if (wire !== 2) throw new BuildCodecError("A skill step in this build is incomplete.");
+    const len = readPlainVarint(bytes, i);
+    const start = len.next;
+    const end = start + len.value;
+    if (end > bytes.length) throw new BuildCodecError("Build code is cut off.");
+    if (field === 1) clicks.push(readClick(bytes.subarray(start, end)));
+    i = end;
+  }
+  return clicks;
+}
+
+function readClick(bytes: Uint8Array): SkillClick {
+  let ability = 0;
+  let kind = 0;
+  let spent = 0;
+  let i = 0;
+  while (i < bytes.length) {
+    const key = readPlainVarint(bytes, i);
+    const field = Math.floor(key.value / 8);
+    const wire = key.value % 8;
+    i = key.next;
+    if (wire !== 0) throw new BuildCodecError("A skill step in this build is incomplete.");
+    const body = field === 3 ? readSigned32(bytes, i) : readPlainVarint(bytes, i);
+    if (field === 1) ability = body.value;
+    if (field === 2) kind = body.value;
+    if (field === 3) spent = body.value;
+    i = body.next;
+  }
+  if (ability < 1 || (kind !== 1 && kind !== 2)) {
+    throw new BuildCodecError("A skill step in this build is incomplete.");
+  }
+  const rank: SkillClick["rank"] = kind === 2 ? 0 : spent === -5 ? 5 : spent === -2 ? 2 : 1;
+  return { ability, rank };
+}
+
+function readPlainVarint(buf: Uint8Array, offset: number): { value: number; next: number } {
+  let value = 0;
+  let shift = 0;
+  let i = offset;
+  while (i < buf.length && shift <= 28) {
+    const byte = buf[i];
+    value += (byte & 0x7f) * 2 ** shift;
+    i += 1;
+    if ((byte & 0x80) === 0) return { value, next: i };
+    shift += 7;
+  }
+  throw new BuildCodecError("Build code is cut off.");
+}
+
+/** A negative ability-point cost is a 10-byte protobuf int32. Keep the low 32 bits. */
+function readSigned32(buf: Uint8Array, offset: number): { value: number; next: number } {
+  let value = 0n;
+  let shift = 0n;
+  let i = offset;
+  while (i < buf.length && shift <= 63n) {
+    const byte = BigInt(buf[i]);
+    value |= (byte & 0x7fn) << shift;
+    i += 1;
+    if ((byte & 0x80n) === 0n) {
+      const low = Number(value & 0xffffffffn);
+      return { value: low >= 0x80000000 ? low - 0x100000000 : low, next: i };
+    }
+    shift += 7n;
+  }
+  throw new BuildCodecError("Build code is cut off.");
+}

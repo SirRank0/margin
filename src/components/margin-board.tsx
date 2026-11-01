@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRight, RotateCcw, Search, X } from "lucide-react";
 import { AbilityPathSection } from "@/components/ability-path";
 import { BuildCourier } from "@/components/build-courier";
+import { BuildEditor } from "@/components/build-editor";
 import { LaneAnalyzer } from "@/components/lane-analyzer";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { ScreenshotTeams } from "@/components/screenshot-teams";
@@ -17,6 +18,7 @@ const TABS = [
   { id: "odds", label: "Comp odds" },
   { id: "order", label: "Ability order" },
   { id: "lane", label: "Lane" },
+  { id: "builder", label: "Builder" },
   { id: "courier", label: "Build courier" },
 ] as const;
 
@@ -67,14 +69,19 @@ export function MarginBoard() {
           <AbilityPathSection />
         </main>
       ) : null}
+      {tab === "courier" ? (
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+          <BuildCourier />
+        </main>
+      ) : null}
       {tab === "lane" ? (
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
           <LaneAnalyzer />
         </main>
       ) : null}
-      {tab === "courier" ? (
+      {tab === "builder" ? (
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
-          <BuildCourier />
+          <BuildEditor />
         </main>
       ) : null}
     </div>
@@ -92,7 +99,7 @@ function SiteNav({ tab, onChoose }: { tab: Tab; onChoose: (tab: Tab) => void }) 
             className="h-12 w-auto sm:h-14"
           />
         </a>
-        <nav aria-label="Sections" className="flex gap-1">
+        <nav aria-label="Sections" className="flex flex-wrap gap-1">
           {TABS.map((item) => {
             const selected = item.id === tab;
             return (
