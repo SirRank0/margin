@@ -218,13 +218,15 @@ function lookAheadWalk(
       return { ...row, wins: nextPick.row.wins, matches: nextPick.row.matches, looked: true };
     });
     const greedy = choose(rows);
-    const pick = choose(valued);
-    if (!pick) break;
+    const ahead = choose(valued);
+    if (!greedy) break;
+    const looked = Boolean(ahead?.row.looked) && ahead.row.ability !== greedy.row.ability;
+    const pick = looked && ahead ? ahead : greedy;
+    const pool = looked ? valued : rows;
     const other =
-      valued
+      pool
         .filter((row) => row.ability !== pick.row.ability && row.matches >= MIN_BRANCH)
         .sort((a, b) => b.matches - a.matches)[0] ?? null;
-    const looked = pick.row.looked && greedy?.row.ability !== pick.row.ability;
     picks.push({ row: pick.row, separated: pick.separated, other, looked });
     order.push(pick.row.ability);
   }

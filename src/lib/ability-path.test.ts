@@ -216,3 +216,41 @@ test("the next 5 is conditional on the ones already maxed", () => {
   assert.equal(second?.separated, true);
   assert.equal(second?.other?.name, "Grenade");
 });
+
+test("a look-ahead that does not change the 5 keeps that step's own games", () => {
+  const hero: HeroOrders = {
+    id: 4,
+    name: "Warden-shaped",
+    wins: 500,
+    matches: 1000,
+    abilities: [
+      { id: 10, name: "Flask", slot: 1 },
+      { id: 11, name: "Word", slot: 2 },
+      { id: 12, name: "Will", slot: 3 },
+      { id: 13, name: "Ult", slot: 4 },
+    ],
+    openUpgrade: [{ ability: 10, wins: 500, matches: 1000 }],
+    prefix3: [{ clicks: [10, 10, 11], wins: 500, matches: 1000 }],
+    beforeFive: [],
+    fiveBeforeUlt: [],
+    firstMax: [{ ability: 10, wins: 1800, matches: 3500 }],
+    ultBeforeFive: { wins: 100, matches: 200 },
+    fiveBeforeUltAny: { wins: 400, matches: 800 },
+    maxSteps: [
+      { prefix: [], ability: 10, wins: 1800, matches: 3500 },
+      { prefix: [], ability: 11, wins: 200, matches: 400 },
+      { prefix: [10], ability: 11, wins: 1300, matches: 2500 },
+      { prefix: [10], ability: 12, wins: 200, matches: 400 },
+    ],
+    continuation: [
+      { prefix: [], five: 10, nextFive: 11, wins: 1300, matches: 2500 },
+    ],
+  };
+  const path = buildPath(hero);
+  const first = path.decisions.find((row) => row.label === "First 5-point upgrade");
+  const second = path.decisions.find((row) => row.label === "Second 5-point upgrade");
+  assert.equal(first?.chosen.name, "Flask");
+  assert.equal(first?.chosen.matches, 3500);
+  assert.equal(second?.chosen.name, "Word");
+  assert.equal(second?.chosen.matches, 2500);
+});
