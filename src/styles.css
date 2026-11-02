@@ -16,6 +16,10 @@
   --color-weapon: #ffb14a;
   --color-vitality: #7dce4a;
   --color-spirit: #c9a0ff;
+  --color-soul: #8ef0d0;
+  --color-stat: #d7f7a8;
+  --color-shop: #313a44;
+  --color-shop-deep: #262e36;
   --radius-card: 0.35rem;
 }
 
@@ -40,5 +44,86 @@
   }
   h1, h2 {
     text-wrap: balance;
+  }
+}
+
+@layer components {
+  .shop-frame {
+    background: var(--color-shop);
+    border: 1px solid color-mix(in srgb, var(--color-fg) 16%, transparent);
+  }
+  .shop-well {
+    background: var(--color-shop-deep);
+  }
+  .shop-box {
+    background: color-mix(in srgb, var(--color-shop) 55%, black);
+  }
+  .item-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(4.75rem, 1fr));
+    gap: 0.5rem;
+  }
+  .item-tile {
+    display: flex;
+    width: 100%;
+    min-height: 5.75rem;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.4rem 0.25rem 0.45rem;
+    border-radius: var(--radius-card);
+    background: var(--color-fg);
+    color: var(--color-ink);
+    text-align: center;
+  }
+  .item-tile[data-owned="true"] {
+    opacity: 0.45;
+  }
+  .item-tile[data-selected="true"],
+  .item-tile:focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 1px;
+  }
+  .item-tile-name {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 0.7rem;
+    line-height: 1.15;
+  }
+  .item-active {
+    position: absolute;
+    top: 0.1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 0.15rem;
+    background: var(--color-ink);
+    padding: 0.12rem 0.22rem;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--color-fg);
+  }
+  .item-tip[data-slot="weapon"] {
+    --tip-head: #6e4814;
+    --tip-body: #4a3010;
+  }
+  .item-tip[data-slot="vitality"] {
+    --tip-head: #245c1c;
+    --tip-body: #173d12;
+  }
+  .item-tip[data-slot="spirit"] {
+    --tip-head: #4c3274;
+    --tip-body: #342252;
+  }
+  .item-tip-head {
+    background: var(--tip-head);
+    color: var(--color-fg);
+  }
+  .item-tip-body {
+    background: var(--tip-body);
+    color: var(--color-fg);
   }
 }

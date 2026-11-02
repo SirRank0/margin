@@ -203,7 +203,16 @@ export function AbilityPathSection() {
             <div key={decision.label} className="text-sm">
               <p className="font-medium text-fg">
                 {decision.label}
-                <span className="ml-2 font-normal text-amber">
+                <span
+                  className="ml-2 font-normal text-amber"
+                  title={
+                    decision.chosen.matches < MIN_BRANCH
+                      ? "Under 200 games, so this line cannot win the comparison."
+                      : decision.separated
+                        ? "This 95% interval sits entirely above the line with the most games."
+                        : "The 95% intervals overlap, so the larger sample is kept."
+                  }
+                >
                   {decision.chosen.matches < MIN_BRANCH ? "thin" : decision.separated ? "separated" : "tied"}
                 </span>
               </p>
