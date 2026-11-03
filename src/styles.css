@@ -84,6 +84,32 @@
     outline: 2px solid var(--color-amber);
     outline-offset: 1px;
   }
+  .item-tile[data-place="build"][data-slot="weapon"] {
+    background: var(--color-weapon);
+  }
+  .item-tile[data-place="build"][data-slot="vitality"] {
+    background: var(--color-vitality);
+  }
+  .item-tile[data-place="build"][data-slot="spirit"] {
+    background: var(--color-spirit);
+  }
+  .item-note {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    font-size: 0.62rem;
+    font-style: italic;
+    line-height: 1.15;
+    color: var(--color-ink);
+  }
+  .build-cat[data-optional="true"] {
+    outline: 1px dashed color-mix(in srgb, var(--color-fg) 55%, transparent);
+    outline-offset: -1px;
+  }
+  .build-cat[data-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--color-enemy);
+  }
   .item-tile-name {
     display: -webkit-box;
     overflow: hidden;
