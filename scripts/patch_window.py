@@ -1,7 +1,7 @@
 """Choose the match window shared by the snapshots.
 
-The latest balance patch is the October 30, 2026 Halloween + gameplay note
-(published 2026-10-30 20:51:00 UTC, 4:51pm EDT).
+The latest balance patch is the November 4, 2026 minor update
+(published 2026-11-05 05:02:00 UTC, 12:02am EST).
 
 A 50% record has a Wilson 95% half-width of 2 percentage points at 2,400
 games. Games since the patch are used only when the median hero has at least
@@ -10,10 +10,10 @@ that many. Otherwise the API default, the last 30 days, is kept.
 
 from datetime import datetime, timezone
 
-PATCH_AT = datetime(2026, 10, 30, 20, 51, 0, tzinfo=timezone.utc)
+PATCH_AT = datetime(2026, 11, 5, 5, 2, 0, tzinfo=timezone.utc)
 PATCH_UNIX = int(PATCH_AT.timestamp())
 ENOUGH = 2400
-PATCH_LABEL = "Since the October 30, 2026 patch"
+PATCH_LABEL = "Since the November 4, 2026 patch"
 
 
 def resolve(get):
