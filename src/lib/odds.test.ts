@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scoreLobby, sigmoid, logit, wilson, type MarginMeta } from "./odds.ts";
+import { scoreLobby, sigmoid, logit, wilson, LANE_PRIOR_K, type MarginMeta } from "./odds.ts";
 
 function meta(
   heroes: MarginMeta["heroes"],
@@ -186,4 +186,64 @@ test("a duo lane above the four strengths keeps a positive leftover", () => {
     { yours: [3, 4], theirs: [1, 2] },
   ]);
   assert.ok(Math.abs(score.probability + flipped.probability - 1) < 1e-9);
+});
+
+test("a street leftover is not wiped by a large table of ordinary streets", () => {
+  const heroes = Array.from({ length: 8 }, (_, i) => ({
+    id: i + 1,
+    name: String.fromCharCode(65 + i),
+    wins: 5000,
+    matches: 10000,
+  }));
+  const lanes = [
+    { a: 1, b: 2, c: 3, d: 4, wins: 28, matches: 62 },
+  ];
+  for (let i = 1; i <= 8; i++) {
+    for (let j = i + 1; j <= 8; j++) {
+      for (let k = 1; k <= 8; k++) {
+        for (let l = k + 1; l <= 8; l++) {
+          if (new Set([i, j, k, l]).size < 4) continue;
+          if (i === 1 && j === 2 && k === 3 && l === 4) continue;
+          lanes.push({ a: i, b: j, c: k, d: l, wins: 50, matches: 100 });
+        }
+      }
+    }
+  }
+  const score = scoreLobby(meta(heroes, [], [], lanes), [1, 2], [3, 4], [
+    { yours: [1, 2], theirs: [3, 4] },
+  ]);
+  const lane = score.parts.find((part) => part.kind === "lane");
+  assert.ok(lane);
+  assert.ok(lane.matches === 62);
+  assert.ok(lane.observed < lane.predicted - 0.04);
+  assert.ok(lane.leftover < -0.01);
+  assert.ok(lane.marginal < 0);
+  const raw = logit(lane.observed) - logit(lane.predicted);
+  assert.ok(Math.abs(lane.leftover) < Math.abs(raw));
+  assert.ok(Math.abs(lane.leftover) > Math.abs(raw) * (62 / (62 + LANE_PRIOR_K)) * 0.5);
+});
+
+test("a thin street leftover stays close to zero, a huge sample keeps more of its gap", () => {
+  const heroes = [
+    { id: 1, name: "A", wins: 5000, matches: 10000 },
+    { id: 2, name: "B", wins: 5000, matches: 10000 },
+    { id: 3, name: "C", wins: 5000, matches: 10000 },
+    { id: 4, name: "D", wins: 5000, matches: 10000 },
+  ];
+  const thin = scoreLobby(
+    meta(heroes, [], [], [{ a: 1, b: 2, c: 3, d: 4, wins: 21, matches: 30 }]),
+    [1, 2],
+    [3, 4],
+    [{ yours: [1, 2], theirs: [3, 4] }],
+  ).parts.find((part) => part.kind === "lane");
+  const thick = scoreLobby(
+    meta(heroes, [], [], [{ a: 1, b: 2, c: 3, d: 4, wins: 7000, matches: 10000 }]),
+    [1, 2],
+    [3, 4],
+    [{ yours: [1, 2], theirs: [3, 4] }],
+  ).parts.find((part) => part.kind === "lane");
+  assert.ok(thin && thick);
+  assert.ok(Math.abs(thin.leftover) < 0.08);
+  assert.ok(thick.leftover > 0.5);
+  assert.ok(Math.abs(thick.leftover) > Math.abs(thin.leftover) * 3);
 });

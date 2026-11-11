@@ -29,6 +29,18 @@ export function ChangelogSection() {
               {formatDate(entry.date)}
             </time>
             <p className="mt-2 text-pretty text-fg">{entry.text}</p>
+            {entry.link ? (
+              <p className="mt-2">
+                <a
+                  href={entry.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-amber hover:underline"
+                >
+                  More info
+                </a>
+              </p>
+            ) : null}
           </li>
         ))}
       </ol>

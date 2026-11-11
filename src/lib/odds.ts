@@ -191,7 +191,30 @@ function pairKey(a: number, b: number) {
  *
  * The interval treats each record as an independent binomial sample. Real
  * matches sit inside several records at once, so the interval is too narrow.
+ * Street leftovers are shrunk toward 0 with a fixed pseudo-count
+ * (LANE_PRIOR_K), not a global random-effects variance: that variance
+ * estimates as 0 on the overlapping street table and would wipe every leftover.
  */
+/**
+ * Games of pull toward "no extra street effect" (a leftover of 0).
+ * 400 keeps a modest effect for a 60-game 5-point gap, and leaves a
+ * 30-game street close to 0. A data-driven tau2 is not used: the
+ * overlapping street table makes Paule-Mandel estimate 0, and we do not
+ * have match-level rows to de-overlap that estimate cheaply.
+ */
+export const LANE_PRIOR_K = 400;
+
+/** Shrink a street leftover toward 0. The interval uses the posterior
+ * variance of that leftover. It is still a bit too narrow overall:
+ * those games already sit in the hero, pair, and counter records, which
+ * the board already warns about.
+ */
+function shrinkLaneLeftover(y: number, v: number): Post {
+  const tau2 = 4 / LANE_PRIOR_K;
+  const precision = 1 / v + 1 / tau2;
+  return { mean: y / v / precision, variance: 1 / precision };
+}
+
 export function scoreLobby(
   meta: MarginMeta,
   yours: number[],
@@ -297,7 +320,6 @@ export function scoreLobby(
   // already in the sum. What remains is the duo-versus-duo leftover.
   const laneKey = (a: number, b: number, c: number, d: number) =>
     `${pairKey(a, b)}|${pairKey(c, d)}`;
-  const laneObs: Obs[] = [];
   const laneIndex: { key: string; y: number; v: number }[] = [];
   const laneRecord = new Map<string, { observed: number; predicted: number; matches: number }>();
   for (const row of meta.lanes ?? []) {
@@ -316,7 +338,6 @@ export function scoreLobby(
     const expected = center + ta.mean + tb.mean - tc.mean - td.mean + rab - rcd + counters;
     const y = fit.y - expected;
     const key = laneKey(row.a, row.b, row.c, row.d);
-    laneObs.push({ y, v: fit.v });
     laneIndex.push({ key, y, v: fit.v });
     laneRecord.set(key, {
       observed: winRate(row.wins, row.matches),
@@ -324,27 +345,32 @@ export function scoreLobby(
       matches: row.matches,
     });
   }
-  const lanePool = pauleMandel(laneObs);
-  const laneDirected = new Map<string, Post>();
+  const laneByKey = new Map(laneIndex.map((row) => [row.key, row]));
+  const laneDirected = new Map<string, { y: number; v: number }>();
   for (const row of laneIndex) {
-    const post = shrink(row.y, row.v, lanePool.mu, lanePool.tau2);
-    laneDirected.set(row.key, { mean: post.mean - lanePool.mu, variance: post.variance });
-  }
-  const lanePost = new Map<string, Post>();
-  for (const [key, post] of laneDirected) {
-    if (lanePost.has(key)) continue;
-    const [ally, enemy] = key.split("|");
+    if (laneDirected.has(row.key)) continue;
+    const [ally, enemy] = row.key.split("|");
     const reverseKey = `${enemy}|${ally}`;
-    const reverse = laneDirected.get(reverseKey);
+    const reverse = laneByKey.get(reverseKey);
     if (!reverse) {
-      lanePost.set(key, post);
-      lanePost.set(reverseKey, { mean: -post.mean, variance: post.variance });
+      laneDirected.set(row.key, { y: row.y, v: row.v });
+      laneDirected.set(reverseKey, { y: -row.y, v: row.v });
+      const record = laneRecord.get(row.key);
+      if (record && !laneRecord.has(reverseKey)) {
+        laneRecord.set(reverseKey, {
+          observed: 1 - record.observed,
+          predicted: 1 - record.predicted,
+          matches: record.matches,
+        });
+      }
       continue;
     }
-    const mean = (post.mean - reverse.mean) / 2;
-    const variance = (post.variance + reverse.variance) / 4;
-    lanePost.set(key, { mean, variance });
-    lanePost.set(reverseKey, { mean: -mean, variance });
+    laneDirected.set(row.key, { y: (row.y - reverse.y) / 2, v: (row.v + reverse.v) / 4 });
+    laneDirected.set(reverseKey, { y: (reverse.y - row.y) / 2, v: (row.v + reverse.v) / 4 });
+  }
+  const lanePost = new Map<string, Post>();
+  for (const [key, row] of laneDirected) {
+    lanePost.set(key, shrinkLaneLeftover(row.y, row.v));
   }
 
   const side = (ids: number[], withPairs: boolean) => {

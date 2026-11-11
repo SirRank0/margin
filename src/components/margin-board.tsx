@@ -9,7 +9,7 @@ import { ScreenshotTeams } from "@/components/screenshot-teams";
 import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
 import { compareHeroNames, compareHeroSearch, heroSearchRank } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
-import { laneMatchups } from "@/data/margin-lanes";
+import { laneMatchups, laneMatchupsByRank } from "@/data/margin-lanes";
 import { rankSlices } from "@/data/margin-ranks";
 import { ChangelogSection } from "@/components/changelog";
 
@@ -143,7 +143,9 @@ function OddsBoard() {
 
   const byId = useMemo(() => new Map(meta.heroes.map((hero) => [hero.id, hero])), [meta.heroes]);
   const taken = useMemo(() => new Set([...yours, ...theirs]), [yours, theirs]);
-  const scored = useMemo(() => ({ ...meta, lanes: laneMatchups }), [meta]);
+  const rankLanes = laneMatchupsByRank[slice.id] ?? (slice.id === "all" ? laneMatchups : []);
+  const lanesEmpty = rankLanes.length === 0;
+  const scored = useMemo(() => ({ ...meta, lanes: rankLanes }), [meta, rankLanes]);
   const score = useMemo(
     () => scoreLobby(scored, yours, theirs, lanes),
     [scored, yours, theirs, lanes],
@@ -333,6 +335,9 @@ function OddsBoard() {
         theirs={theirs}
         byId={byId}
         score={score}
+        rankId={slice.id}
+        rankLabel={slice.label}
+        lanesEmpty={lanesEmpty}
         onAssign={assignLane}
       />
 
@@ -413,6 +418,9 @@ function LaneBoard({
   theirs,
   byId,
   score,
+  rankId,
+  rankLabel,
+  lanesEmpty,
   onAssign,
 }: {
   lanes: LaneSlots[];
@@ -420,6 +428,9 @@ function LaneBoard({
   theirs: number[];
   byId: Map<number, { id: number; name: string }>;
   score: Score;
+  rankId: string;
+  rankLabel: string;
+  lanesEmpty: boolean;
   onAssign: (index: number, which: Side, id: number) => void;
 }) {
   return (
@@ -428,12 +439,20 @@ function LaneBoard({
       <p className="mt-1 max-w-2xl text-pretty text-sm text-muted">
         Put the two who shared a street on the left, and the two they laned into on the right.
         The chance keeps only what is left after their hero rates, their pair gaps, and the four
-        one-versus-one matchups. A hero in no street is not a lane term. York, Broadway, and
-        Greenwich are pooled.
+        one-versus-one matchups, using street records from the rank you picked. A street with
+        too few games at that rank adds nothing, instead of borrowing all-ranks numbers. A hero
+        in no street is not a lane term. York, Broadway, and Greenwich are pooled.
       </p>
+      {lanesEmpty && rankId !== "all" ? (
+        <p className="mt-3 text-pretty text-sm text-muted">
+          {rankLabel} does not have enough street records for a specific four heroes yet, so
+          assigning lanes will not change the chance. Choose All ranks to use streets from every
+          badge.
+        </p>
+      ) : null}
       <div className="mt-4 grid gap-3">
         {LANE_NAMES.map((name, index) => {
-          const note = laneNote(score, lanes[index], byId);
+          const note = laneNote(score, lanes[index], byId, { rankId, rankLabel, lanesEmpty });
           return (
             <div key={name} className="grid gap-2 sm:grid-cols-[7rem_1fr_1fr] sm:items-start">
               <p className="pt-7 text-sm font-medium text-amber">{name}</p>
@@ -466,6 +485,7 @@ function laneNote(
   score: Score,
   lane: LaneSlots,
   byId: Map<number, { id: number; name: string }>,
+  rank: { rankId: string; rankLabel: string; lanesEmpty: boolean },
 ) {
   if (lane.yours.length !== 2 || lane.theirs.length !== 2) return null;
   const names = (ids: number[]) =>
@@ -476,6 +496,12 @@ function laneNote(
   const label = `${names(lane.yours)} vs ${names(lane.theirs)}`;
   const part = score.parts.find((row) => row.kind === "lane" && row.label === label);
   if (!part || part.matches <= 0) {
+    if (rank.lanesEmpty && rank.rankId !== "all") {
+      return `${rank.rankLabel} does not have enough street records for a specific four heroes yet, so assigning this lane does not change the chance. Choose All ranks to use streets from every badge.`;
+    }
+    if (rank.rankId !== "all") {
+      return `These four have not shared a street at least 30 times at ${rank.rankLabel}, so there is no extra lane number to add.`;
+    }
     return "These four have not shared a street at least 30 times in this window, so there is no extra lane number to add.";
   }
   const seen = `Won ${pct(part.observed)} over ${part.matches.toLocaleString()} streets, against ${pct(part.predicted)} already predicted by the heroes.`;
@@ -642,8 +668,11 @@ function MathNotes() {
         <p>
           <span className="text-fg">A lane is the same idea for a street.</span> It is used only
           when you name two of yours and two of theirs. The model subtracts their hero rates, the
-          pair extras, and the four one-versus-one matchups, and keeps whatever is still left.
-          York, Broadway, and Greenwich are pooled. A solo lane is not in the table.
+          pair extras, and the four one-versus-one matchups, and keeps whatever is still left,
+          pulled toward no extra effect when the street has few games. It uses records from the
+          rank you picked. If that rank has too few street games, the leftover is left out,
+          rather than borrowing all-ranks numbers. York, Broadway, and Greenwich are pooled. A
+          solo lane is not in the table.
         </p>
         <p>
           <span className="text-fg">The pieces are not added as percentages.</span> 60% plus 60%

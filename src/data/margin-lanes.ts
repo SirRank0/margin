@@ -1,7 +1,8 @@
 import type { LaneStat } from "@/lib/odds";
 
-/** Duo versus duo, all ranks, same window as dataWindow, at least 30 lane matchups. Streets are pooled. Solo lanes are excluded by the source table. */
-export const laneMatchups: LaneStat[] = [
+/** Duo versus duo, one table per rank band, same window as dataWindow, at least 30 lane matchups. Streets are pooled. Solo lanes are excluded by the source table. */
+export const laneMatchupsByRank: Record<string, LaneStat[]> = {
+  "all": [
   {a:1,b:10,c:13,d:15,wins:59,matches:142},
   {a:13,b:15,c:1,d:10,wins:83,matches:142},
   {a:15,b:64,c:13,d:84,wins:55,matches:139},
@@ -34140,4 +34141,40 @@ export const laneMatchups: LaneStat[] = [
   {a:10,b:84,c:4,d:15,wins:16,matches:30},
   {a:25,b:81,c:65,d:84,wins:9,matches:30},
   {a:15,b:20,c:10,d:64,wins:22,matches:30}
-];
+  ],
+  "initiate": [
+
+  ],
+  "seeker": [
+
+  ],
+  "acolyte": [
+
+  ],
+  "sentinel": [
+
+  ],
+  "mystic": [
+
+  ],
+  "ritualist": [
+
+  ],
+  "emissary": [
+
+  ],
+  "oracle": [
+
+  ],
+  "phantom": [
+
+  ],
+  "ascendant": [
+
+  ],
+  "eternus": [
+
+  ]
+};
+
+export const laneMatchups: LaneStat[] = laneMatchupsByRank.all ?? [];
