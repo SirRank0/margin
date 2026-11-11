@@ -544,6 +544,25 @@ test("rank bands: a thin band falls back to all ranks for each pick, marked pool
   assertObeysRules(path, ABILITIES);
 });
 
+test("the tuned PRIOR_K is the one docs/prior-tuning.md chose, and it is what shrinks", () => {
+  const doc = readFileSync(new URL("../../docs/prior-tuning.md", import.meta.url), "utf8");
+  const match = /PRIOR_K = ([\d,]+)/.exec(doc);
+  assert.ok(match, "docs/prior-tuning.md states PRIOR_K");
+  assert.equal(PRIOR_K, Number(match[1].replace(/,/g, "")));
+  const h = hero([
+    { seq: seq(ABCU, A, A, A, B, B, B), wins: 3_000, matches: 5_000 },
+    { seq: seq(ABCU, B, B, B, A, A, A), wins: 2_000, matches: 5_000 },
+  ]);
+  const path = buildPath(h);
+  const order = path.decisions[0];
+  const parent = h.wins / h.matches;
+  assert.ok(Math.abs(order.chosen.rate - (order.chosen.wins + PRIOR_K * parent) / (order.chosen.matches + PRIOR_K)) < 1e-12);
+  const strategy = path.decisions[STRATEGY_DECISION];
+  assert.ok(Math.abs(strategy.chosen.rate - (3_000 + PRIOR_K * order.chosen.rate) / (5_000 + PRIOR_K)) < 1e-12);
+  const other = buildPath(h, {}, ALL_RANKS, { priorK: PRIOR_K * 4 }).decisions[STRATEGY_DECISION];
+  assert.notEqual(other.chosen.rate, strategy.chosen.rate, "priorK overrides it for tuning");
+});
+
 test("property: every hero in every rank band file obeys the rules, deterministically", () => {
   const source = readFileSync(new URL("../data/ability-orders.ts", import.meta.url), "utf8");
   const orders = JSON.parse(source.slice(source.indexOf("= {") + 2, source.lastIndexOf("}") + 1)) as AbilityOrders;
