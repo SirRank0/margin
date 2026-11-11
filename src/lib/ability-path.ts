@@ -139,11 +139,15 @@ export function choose<T extends Count>(rows: T[]): { row: T; separated: boolean
   const pool = eligible.length > 0 ? eligible : rows.filter((row) => row.matches > 0);
   if (pool.length === 0) return null;
   const scored = pool.map((row) => ({ row, ...interval(row) }));
-  const leader = scored.reduce((best, row) => {
+  const common = scored.reduce((best, row) => (row.matches > best.matches ? row : best));
+  // A thin line cannot beat the common one. It needs a real share of the games,
+  // not just a lower bound that barely clears on a few hundred matches.
+  const floor = Math.max(MIN_BRANCH, Math.floor(common.matches * 0.05));
+  const contenders = scored.filter((row) => row.matches >= floor);
+  const leader = contenders.reduce((best, row) => {
     if (row.low !== best.low) return row.low > best.low ? row : best;
     return row.matches > best.matches ? row : best;
   });
-  const common = scored.reduce((best, row) => (row.matches > best.matches ? row : best));
   const chosen = leader === common || !overlaps(leader, common) ? leader : common;
   const rival = scored
     .filter((row) => row.row !== chosen.row)
