@@ -1,6 +1,25 @@
-"""Build a prefix tree of ability sequences for every hero.
+"""Build the two ability decisions for every hero.
 
-The board walks the tree. It does not stitch separate tables.
+Deadlock has two separate resources (https://deadlock.wiki/Abilities,
+https://deadlock.wiki/Boon):
+
+* Unlocks: one at boon levels 0, 2, 4 and 7. The first three can only go on
+  basic abilities, in any order. The fourth is the ultimate's.
+* Ability points: one at every other boon level up to 35, 32 in all. The
+  1-, 2- and 5-point upgrades of four abilities cost exactly 32, so an unlock
+  costs no points.
+
+The API's ability order lists both in one stream: the first appearance of an
+ability is its unlock and later appearances are its upgrades. This script
+splits each order into:
+
+* the unlock order of the three basics (a slot code such as 213),
+* where the ultimate unlock went (see ult_option),
+* the point-spend order of the 12 upgrades, as a prefix tree under each unlock
+  order. Upgrades bought within WINDOW_S seconds of each other (by the API's
+  average upgrade times) were bought in one go, so their order inside the
+  window is not a choice; they are put in slot order so the tree does not split
+  on it.
 """
 
 import json
@@ -17,6 +36,11 @@ from patch_window import resolve
 API = "https://api.deadlock-api.com"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "ability-orders.ts"
 KEEP = 30
+# Upgrades this close together (seconds, average game time) count as one purchase.
+WINDOW_S = 10
+COST = {1: 1, 2: 2, 3: 5}
+# Points that exist when the ultimate unlock arrives at level 7.
+POINTS_BY_LEVEL_7 = 4
 
 
 def get(path, params=None):
@@ -29,87 +53,130 @@ def get(path, params=None):
 
 
 class Node:
-    __slots__ = ("wins", "matches", "end_matches", "children")
+    __slots__ = ("wins", "matches", "children")
 
     def __init__(self):
         self.wins = 0
         self.matches = 0
-        self.end_matches = 0
         self.children = {}
 
-    def add(self, wins, matches, ending):
-        self.wins += wins
-        self.matches += matches
-        if ending:
-            self.end_matches += matches
+
+def ult_option(basics_before, points_before):
+    """basics_before * 100, plus the points spent before the ultimate unlock
+    when it was held past level 7 (more points than exist at level 7)."""
+    held = points_before if points_before > POINTS_BY_LEVEL_7 else 0
+    return basics_before * 100 + held
+
+
+def split(abilities, times, slot_ids):
+    """One API order -> (unlock code, ult option, spends, unlocks before each spend).
+
+    Returns None when the three basics were never all unlocked.
+    """
+    slot_of = {ability: i + 1 for i, ability in enumerate(slot_ids)}
+    ult = slot_ids[3]
+    seen = defaultdict(int)
+    basics = []
+    ult_opt = None
+    points = 0
+    spends = []  # (ability, time, unlocks before)
+    for pos, ability in enumerate(abilities):
+        if ability not in slot_of or seen[ability] >= 4:
+            continue
+        seen[ability] += 1
+        tier = seen[ability] - 1
+        if tier == 0:
+            if ability == ult:
+                ult_opt = ult_option(len(basics), points)
+            else:
+                basics.append(slot_of[ability])
+        else:
+            t = times[pos] if times and pos < len(times) else None
+            unlocked = len(basics) + (1 if ult_opt is not None else 0)
+            spends.append((ability, t, unlocked))
+            points += COST[tier]
+    if len(basics) < 3:
+        return None
+    # Canonical order inside a purchase window: slot order, stable, so an
+    # ability's own tiers keep their order.
+    canon = []
+    group = []
+    last = None
+    for entry in spends:
+        if group and (entry[1] is None or last is None or abs(entry[1] - last) > WINDOW_S):
+            canon.extend(sorted(group, key=lambda e: slot_of[e[0]]))
+            group = []
+        group.append(entry)
+        last = entry[1]
+    canon.extend(sorted(group, key=lambda e: slot_of[e[0]]))
+    # Unlocks-before stays with the position, not the moved upgrade.
+    before = [entry[2] for entry in spends]
+    code = basics[0] * 100 + basics[1] * 10 + basics[2]
+    return code, ult_opt, [entry[0] for entry in canon], before
 
 
 def build(rows, slot_ids):
-    """Insert sequences into a trie and a rank-vector backoff table.
-
-    slot_ids is the four ability ids in slot order. The state key is the
-    four ranks (0..4) in that order, so games that reached the same ranks
-    by different orders share a backoff row.
-    """
-    known = set(slot_ids)
-    root = Node()
+    index_of = {ability: i for i, ability in enumerate(slot_ids)}
+    unlocks = defaultdict(lambda: [0, 0])
+    ults = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    spend = defaultdict(Node)
     states = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     for row in rows:
-        seen = defaultdict(int)
-        clean = []
-        for ability in row["abilities"]:
-            if ability not in known or seen[ability] >= 4:
-                continue
-            seen[ability] += 1
-            clean.append(ability)
+        parts = split(row["abilities"], row.get("avg_upgrade_times_s"), slot_ids)
+        if parts is None:
+            continue
+        code, ult_opt, spends, before = parts
         w, n = row["wins"], row["matches"]
-        node = root
-        node.add(w, n, ending=not clean)
-        ranks = [0, 0, 0, 0]
-        index_of = {ability: i for i, ability in enumerate(slot_ids)}
-        for pos, ability in enumerate(clean):
-            key = ",".join(str(r) for r in ranks)
+        unlocks[code][0] += w
+        unlocks[code][1] += n
+        if ult_opt is not None:
+            ults[code][ult_opt][0] += w
+            ults[code][ult_opt][1] += n
+        node = spend[code]
+        node.wins += w
+        node.matches += n
+        tiers = [0, 0, 0, 0]
+        points = 0
+        for ability, unlocked in zip(spends, before):
+            key = f"{','.join(map(str, tiers))}|{unlocked}|{points}"
             bucket = states[key][ability]
             bucket[0] += w
             bucket[1] += n
-            ranks[index_of[ability]] += 1
+            i = index_of[ability]
+            tiers[i] += 1
+            points += COST[tiers[i]]
             child = node.children.get(ability)
             if child is None:
                 child = Node()
                 node.children[ability] = child
-            child.add(w, n, ending=pos == len(clean) - 1)
+            child.wins += w
+            child.matches += n
             node = child
-    return root, states
+    return unlocks, ults, spend, states
 
 
 def prune(node):
     node.children = {
-        ability: child
-        for ability, child in node.children.items()
-        if child.matches >= KEEP and prune(child) is not None
+        ability: prune(child) for ability, child in node.children.items() if child.matches >= KEEP
     }
     return node
 
 
 def serialize(node, ability_id):
-    children = sorted(node.children.items(), key=lambda item: -item[1].matches)
+    children = sorted(node.children.items(), key=lambda item: (-item[1].matches, item[0]))
     return [ability_id, node.wins, node.matches, [serialize(child, ability) for ability, child in children]]
 
 
-def serialize_states(states):
-    out = {}
-    for key, nxt in states.items():
-        rows = [[ability, w, n] for ability, (w, n) in nxt.items() if n >= KEEP]
-        if rows:
-            rows.sort(key=lambda row: -row[2])
-            out[key] = rows
-    return out
+def rows_of(table):
+    rows = [[key, w, n] for key, (w, n) in table.items() if n >= KEEP]
+    rows.sort(key=lambda row: (-row[2], row[0]))
+    return rows
 
 
 def hero_tree(hero, names, window):
     rows = get(
         "/v1/analytics/ability-order-stats",
-        {"hero_id": hero["id"], "min_matches": 1, **window},
+        {"hero_id": hero["id"], "min_matches": 1, "game_mode": "normal", **window},
     )
     abilities = []
     for slot in (1, 2, 3, 4):
@@ -117,24 +184,28 @@ def hero_tree(hero, names, window):
         found = names.get((hero["id"], class_name))
         if found:
             abilities.append({"id": found[0], "name": found[1], "slot": slot})
-    slot_ids = [ability["id"] for ability in abilities]
     wins = sum(row["wins"] for row in rows)
     matches = sum(row["matches"] for row in rows)
-    root, states = build(rows, slot_ids)
-    prune(root)
+    band = {"band": "all", "label": "All ranks", "unlocks": [], "ult": {}, "spend": {}, "states": {}}
+    if len(abilities) == 4:
+        unlocks, ults, spend, states = build(rows, [ability["id"] for ability in abilities])
+        band["unlocks"] = rows_of(unlocks)
+        kept = {str(row[0]) for row in band["unlocks"]}
+        band["ult"] = {code: rows_of(table) for code, table in ults.items() if str(code) in kept}
+        band["spend"] = {str(code): serialize(prune(node), 0) for code, node in spend.items() if str(code) in kept}
+        band["states"] = {key: r for key, table in states.items() if (r := rows_of(table))}
     return {
         "id": hero["id"],
         "name": hero["name"],
         "wins": wins,
         "matches": matches,
         "abilities": abilities,
-        "bands": [{
-            "band": "all",
-            "label": "All ranks",
-            "root": serialize(root, 0),
-            "states": serialize_states(states),
-        }],
+        "bands": [band],
     }
+
+
+def count_nodes(node):
+    return 1 + sum(count_nodes(child) for child in node[3])
 
 
 def main():
@@ -165,24 +236,20 @@ def main():
             print("skip", hero["name"], "matches", row["matches"])
             continue
         built.append(row)
-        nodes = count_nodes(row["bands"][0]["root"])
-        print(f"{hero['name']:16} {row['matches']:7} games  {nodes:5} nodes")
+        nodes = sum(count_nodes(root) for root in row["bands"][0]["spend"].values())
+        print(f"{hero['name']:16} {row['matches']:7} games  {len(row['bands'][0]['unlocks'])} orders  {nodes:5} nodes")
     payload = {
         "fetchedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "window": info["label"],
         "heroes": built,
     }
     text = (
-        "// Ability-order tree. The board reads this file and does not call the API.\n"
+        "// Ability unlock orders and point-spend trees. The board reads this file and does not call the API.\n"
         "import type { AbilityOrders } from \"@/lib/ability-path\";\n\n"
         f"export const abilityOrders: AbilityOrders = {json.dumps(payload, separators=(',', ':'))};\n"
     )
     OUT.write_text(text)
     print("wrote", OUT, "heroes", len(built), "bytes", OUT.stat().st_size)
-
-
-def count_nodes(node):
-    return 1 + sum(count_nodes(child) for child in node[3])
 
 
 if __name__ == "__main__":
