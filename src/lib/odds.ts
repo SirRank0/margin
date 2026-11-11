@@ -215,12 +215,31 @@ function shrinkLaneLeftover(y: number, v: number): Post {
   return { mean: y / v / precision, variance: 1 / precision };
 }
 
-export function scoreLobby(
-  meta: MarginMeta,
-  yours: number[],
-  theirs: number[],
-  laneAssignments: LaneAssignment[] = [],
-): Score {
+/**
+ * Games below this, a 50% record's Wilson 95% range is wider than about
+ * 7 points, so the raw win rate is not the headline on a hero card.
+ * A rank is marked thin when the median hero is under this floor.
+ */
+export const HERO_THIN_MATCHES = 200;
+
+export type HeroRate = {
+  id: number;
+  wins: number;
+  matches: number;
+  raw: number;
+  /** Chance if this hero is picked alone, the rate the lobby model uses. */
+  model: number;
+  thin: boolean;
+  interval: { low: number; high: number };
+};
+
+export type RankSample = {
+  medianMatches: number;
+  thin: boolean;
+};
+
+/** Same hero strengths as scoreLobby. */
+function fitHeroes(meta: MarginMeta) {
   const heroes = new Map(meta.heroes.map((hero) => [hero.id, hero]));
   const total = meta.heroes.reduce(
     (sum, hero) => {
@@ -243,6 +262,41 @@ export function scoreLobby(
     const post = shrink(obs.y, obs.v, heroPool.mu, heroPool.tau2);
     heroPost.set(id, { mean: post.mean - heroPool.mu, variance: post.variance });
   }
+  return { heroes, center, heroPost };
+}
+
+export function rankSample(heroes: { matches: number }[]): RankSample {
+  const counts = heroes.map((hero) => hero.matches).sort((a, b) => a - b);
+  const medianMatches = counts.length ? counts[Math.floor(counts.length / 2)] : 0;
+  return { medianMatches, thin: medianMatches < HERO_THIN_MATCHES };
+}
+
+export function heroRates(meta: MarginMeta): Map<number, HeroRate> {
+  const { heroPost } = fitHeroes(meta);
+  const rates = new Map<number, HeroRate>();
+  for (const hero of meta.heroes) {
+    const post = heroPost.get(hero.id);
+    const interval = wilson(hero.wins, hero.matches);
+    rates.set(hero.id, {
+      id: hero.id,
+      wins: hero.wins,
+      matches: hero.matches,
+      raw: winRate(hero.wins, hero.matches),
+      model: post ? sigmoid(post.mean) : 0.5,
+      thin: hero.matches < HERO_THIN_MATCHES,
+      interval: { low: interval.low, high: interval.high },
+    });
+  }
+  return rates;
+}
+
+export function scoreLobby(
+  meta: MarginMeta,
+  yours: number[],
+  theirs: number[],
+  laneAssignments: LaneAssignment[] = [],
+): Score {
+  const { heroes, center, heroPost } = fitHeroes(meta);
 
   const pairObs: Obs[] = [];
   const pairIndex: { key: string; y: number; v: number }[] = [];

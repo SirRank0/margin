@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scoreLobby, sigmoid, logit, wilson, LANE_PRIOR_K, type MarginMeta } from "./odds.ts";
+import { scoreLobby, sigmoid, logit, wilson, heroRates, rankSample, HERO_THIN_MATCHES, LANE_PRIOR_K, type MarginMeta } from "./odds.ts";
+import { rankSlices } from "../data/margin-ranks.ts";
 
 function meta(
   heroes: MarginMeta["heroes"],
@@ -246,4 +247,93 @@ test("a thin street leftover stays close to zero, a huge sample keeps more of it
   assert.ok(Math.abs(thin.leftover) < 0.08);
   assert.ok(thick.leftover > 0.5);
   assert.ok(Math.abs(thick.leftover) > Math.abs(thin.leftover) * 3);
+});
+
+
+test("a hero card's model rate matches picking that hero alone in the lobby", () => {
+  const data = meta([
+    { id: 1, name: "Established", wins: 60000, matches: 100000 },
+    { id: 2, name: "Streak", wins: 8, matches: 10 },
+    ...Array.from({ length: 20 }, (_, i) => ({
+      id: 10 + i,
+      name: `Field ${i}`,
+      wins: 5000,
+      matches: 10000,
+    })),
+  ]);
+  const rates = heroRates(data);
+  for (const hero of data.heroes) {
+    const rate = rates.get(hero.id);
+    assert.ok(rate);
+    const alone = scoreLobby(data, [hero.id], []);
+    assert.ok(Math.abs(rate.model - alone.probability) < 1e-12);
+    assert.equal(rate.raw, hero.wins / hero.matches);
+    assert.equal(rate.thin, hero.matches < HERO_THIN_MATCHES);
+    const interval = wilson(hero.wins, hero.matches);
+    assert.equal(rate.interval.low, interval.low);
+    assert.equal(rate.interval.high, interval.high);
+  }
+  const streak = rates.get(2);
+  const established = rates.get(1);
+  assert.ok(streak && established);
+  assert.ok(streak.thin);
+  assert.ok(!established.thin);
+  assert.ok(Math.abs(streak.model - 0.5) < Math.abs(streak.raw - 0.5));
+  assert.ok(Math.abs(established.model - established.raw) < 0.01);
+});
+
+test("a 200-game floor marks thin heroes, and a band is thin when its median hero is under it", () => {
+  assert.equal(HERO_THIN_MATCHES, 200);
+  assert.equal(rankSample([{ matches: 199 }]).thin, true);
+  assert.equal(rankSample([{ matches: 200 }]).thin, false);
+  const mixed = rankSample([
+    { matches: 10 },
+    { matches: 65 },
+    { matches: 400 },
+  ]);
+  assert.equal(mixed.medianMatches, 65);
+  assert.equal(mixed.thin, true);
+  assert.equal(rankSample([{ matches: 423 }, { matches: 500 }, { matches: 600 }]).thin, false);
+});
+
+test("live rank cards shrink thin Eternus and Initiate records toward the field", () => {
+  const eternus = rankSlices.find((row) => row.id === "eternus");
+  const initiate = rankSlices.find((row) => row.id === "initiate");
+  const all = rankSlices.find((row) => row.id === "all");
+  assert.ok(eternus && initiate && all);
+
+  const eternusSample = rankSample(eternus.meta.heroes);
+  assert.ok(eternusSample.medianMatches < HERO_THIN_MATCHES);
+  assert.ok(eternusSample.thin);
+  assert.ok(!rankSample(initiate.meta.heroes).thin);
+  assert.ok(!rankSample(all.meta.heroes).thin);
+
+  const eternusRates = heroRates(eternus.meta);
+  const sinclair = eternus.meta.heroes.find((hero) => hero.name === "Sinclair");
+  const haze = eternus.meta.heroes.find((hero) => hero.name === "Haze");
+  assert.ok(sinclair && haze);
+  const sinclairRate = eternusRates.get(sinclair.id);
+  const hazeRate = eternusRates.get(haze.id);
+  assert.ok(sinclairRate && hazeRate);
+  assert.equal(sinclairRate.wins, 4);
+  assert.equal(sinclairRate.matches, 11);
+  assert.ok(sinclairRate.thin);
+  assert.ok(Math.abs(sinclairRate.raw - 4 / 11) < 1e-12);
+  assert.ok(Math.abs(sinclairRate.model - scoreLobby(eternus.meta, [sinclair.id], []).probability) < 1e-12);
+  assert.ok(Math.abs(sinclairRate.model - 0.5) < Math.abs(sinclairRate.raw - 0.5));
+  assert.ok(hazeRate.thin);
+  assert.equal(hazeRate.matches, 170);
+  assert.ok(Math.abs(hazeRate.model - scoreLobby(eternus.meta, [haze.id], []).probability) < 1e-12);
+  assert.ok(Math.abs(hazeRate.model - 0.5) < Math.abs(hazeRate.raw - 0.5) + 1e-12);
+
+  const initiateRates = heroRates(initiate.meta);
+  const solomon = initiate.meta.heroes.find((hero) => hero.name === "Solomon");
+  assert.ok(solomon);
+  const solomonRate = initiateRates.get(solomon.id);
+  assert.ok(solomonRate);
+  assert.equal(solomonRate.wins, 53);
+  assert.equal(solomonRate.matches, 125);
+  assert.ok(solomonRate.thin);
+  assert.ok(Math.abs(solomonRate.model - scoreLobby(initiate.meta, [solomon.id], []).probability) < 1e-12);
+  assert.ok(Math.abs(solomonRate.model - 0.5) < Math.abs(solomonRate.raw - 0.5));
 });

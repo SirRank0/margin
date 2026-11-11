@@ -6,7 +6,7 @@ import { BuildEditor } from "@/components/build-editor";
 import { LaneAnalyzer } from "@/components/lane-analyzer";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { ScreenshotTeams } from "@/components/screenshot-teams";
-import { scoreLobby, wilson, type Score, type ScorePart } from "@/lib/odds";
+import { scoreLobby, wilson, heroRates, rankSample, type Score, type ScorePart } from "@/lib/odds";
 import { compareHeroNames, compareHeroSearch, heroSearchRank } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
 import { laneMatchups, laneMatchupsByRank } from "@/data/margin-lanes";
@@ -41,6 +41,11 @@ function compact(matches: number) {
   if (matches >= 1_000_000) return `${(matches / 1_000_000).toFixed(1)}m`;
   if (matches >= 1000) return `${Math.round(matches / 1000)}k`;
   return String(matches);
+}
+
+function record(wins: number, matches: number) {
+  if (matches >= 10_000) return `${compact(wins)}–${compact(matches)}`;
+  return `${wins.toLocaleString()}–${matches.toLocaleString()}`;
 }
 
 export function MarginBoard() {
@@ -142,6 +147,8 @@ function OddsBoard() {
   const [query, setQuery] = useState("");
 
   const byId = useMemo(() => new Map(meta.heroes.map((hero) => [hero.id, hero])), [meta.heroes]);
+  const rates = useMemo(() => heroRates(meta), [meta]);
+  const sample = useMemo(() => rankSample(meta.heroes), [meta.heroes]);
   const taken = useMemo(() => new Set([...yours, ...theirs]), [yours, theirs]);
   const rankLanes = laneMatchupsByRank[slice.id] ?? (slice.id === "all" ? laneMatchups : []);
   const lanesEmpty = rankLanes.length === 0;
@@ -238,6 +245,7 @@ function OddsBoard() {
               {rankSlices.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.label}
+                  {rankSample(row.meta.heroes).thin ? " (small samples)" : ""}
                 </option>
               ))}
             </select>
@@ -262,6 +270,14 @@ function OddsBoard() {
           </div>
         </div>
       </header>
+
+      {sample.thin ? (
+        <p className="text-pretty text-sm text-muted">
+          Hero numbers at {slice.label} are pulled toward the field: the median hero has{" "}
+          {sample.medianMatches.toLocaleString()} games, below the 200-game floor, so a raw win
+          rate can move around a lot. Each card shows the model rate, then the raw record.
+        </p>
+      ) : null}
 
       <ScreenshotTeams
         heroes={meta.heroes.map((hero) => ({ id: hero.id, name: hero.name }))}
@@ -347,6 +363,7 @@ function OddsBoard() {
             <h2 className="font-display text-2xl text-fg">Heroes</h2>
             <p className="text-sm text-muted">
               Adding to {side === "yours" ? "your side" : "their side"}. An empty seat can pick from its own menu.
+              The percentage is the model rate, the same number used in the chance above.
             </p>
           </div>
           <label className="flex min-h-11 items-center gap-2 rounded-card border border-line bg-bg px-3 sm:w-64">
@@ -362,21 +379,29 @@ function OddsBoard() {
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           {shown.map((hero) => {
             const used = taken.has(hero.id);
-            const rate = wilson(hero.wins, hero.matches);
+            const rate = rates.get(hero.id);
+            const interval = rate?.interval ?? wilson(hero.wins, hero.matches);
+            const tip = rate
+              ? `Model ${pct(rate.model)}. Raw ${pct(rate.raw)} (${rate.wins.toLocaleString()} of ${rate.matches.toLocaleString()}). Wilson 95% interval ${pct(interval.low)}–${pct(interval.high)}.`
+              : `${pct(interval.low)}–${pct(interval.high)} Wilson 95% interval`;
             return (
               <button
                 key={hero.id}
                 type="button"
                 disabled={used || (side === "yours" ? yoursFull : theirs.length >= SEATS)}
                 onClick={() => addHero(hero.id)}
-                title={`${pct(rate.low)}–${pct(rate.high)} Wilson 95% interval`}
+                title={tip}
                 className="flex min-h-14 items-center gap-3 rounded-card border border-line bg-raised px-3 py-2 text-left disabled:opacity-40"
               >
                 <HeroPortrait id={hero.id} name={hero.name} />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-fg">{hero.name}</span>
                   <span className="block tabular-nums text-sm text-muted">
-                    {pct(rate.p)} · {compact(hero.matches)}
+                    {pct(rate?.model ?? 0.5)}
+                  </span>
+                  <span className="block tabular-nums text-xs text-muted">
+                    {rate ? record(rate.wins, rate.matches) : compact(hero.matches)}
+                    {rate?.thin ? " · small sample" : ""}
                   </span>
                 </span>
               </button>
