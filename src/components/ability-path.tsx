@@ -7,11 +7,7 @@ import {
   buildPath,
   LOW_CONFIDENCE_GAMES,
   MIN_BRANCH,
-  MIN_SHARE,
-  PRIOR_K,
-  SEPARATED_P,
   STRATEGY_DECISION,
-  TOTAL_POINTS,
   ultOptionLabel,
   type BandTree,
   type Click,
@@ -144,34 +140,42 @@ export function AbilityPathSection() {
         <div className="max-w-2xl">
           <h2 className="font-display text-2xl text-fg">Ability order</h2>
           <p className="mt-1 text-pretty text-sm text-muted">
-            Unlocking and upgrading are separate (see docs/ability-mechanics.md). Unlocks arrive at
-            boon levels 0, 2, 4 and 7: the first three go on basic abilities in any order, the fourth
-            is the ultimate&apos;s. Points arrive at every other level up to 35, {TOTAL_POINTS} in
-            all, and each ability&apos;s upgrades cost 1, 2 and 5 points, in turn. Points can be
-            held for a later upgrade. From public games the path picks, in order: the order of the
-            three basic unlocks; where the ultimate unlock went; a point-allocation strategy, which is
-            the first and second ability maxed and how much else had its 2-point upgrade before the
-            first max; and the best order of the 12 upgrades inside that strategy. Upgrades bought
-            within a few seconds of each other count as one purchase. Each pick takes the best win
-            rate after pulling it toward the win rate of the games that got this far
-            ({PRIOR_K.toLocaleString()} games of pull), so a small sample cannot win on luck, and needs
-            at least {MIN_BRANCH.toLocaleString()} games and {Math.round(MIN_SHARE * 100)}% of the
-            most-played option&apos;s games. It is separated when there is at least a{" "}
-            {Math.round(SEPARATED_P * 100)}% chance it beats the runner-up, and tied otherwise.
-            Strategies the best one cannot be told apart from are listed as alternatives, each with
-            its own path. A tied pick can be switched, and every pick after it is walked again. When
-            the exact line runs out of games, the next upgrade comes from all games at the same
-            upgrades, unlocks and points spent, and if nothing has enough games the most-played
-            upgrade that keeps the strategy is taken. Both are marked low confidence, as is any pick
-            under {LOW_CONFIDENCE_GAMES.toLocaleString()} games. The click list lays the picks on the
-            level schedule: each unlock is used when it arrives, each upgrade is bought as soon as
-            its points are there. Strategy win rates come from games long enough to max two
-            abilities (level 19 or later). {dataWindow.label}. The next patch stays on the last 30
-            days until the median hero has {dataWindow.enough.toLocaleString()} games in it. A rank
-            band keeps matches whose average badge is in it; where a band has too few games for a
-            pick, all ranks are used and the pick is marked low confidence. This is not part of the
-            comp odds.
+            The ability order that won most often in public matches for this hero. Follow the
+            clicks top to bottom as you level: each one tells you which ability to unlock or
+            upgrade next. Pick your rank to see what wins at your level.
           </p>
+          <details className="mt-2 text-sm text-muted">
+            <summary className="cursor-pointer text-fg">How this is worked out</summary>
+            <ul className="mt-2 grid list-disc gap-1 pl-5 text-pretty">
+              <li>
+                It compares whole plans: which ability you max first and second, and whether you
+                rush that first max or put points into the others along the way. The plan with the
+                best win rate is shown.
+              </li>
+              <li>
+                Plans that come out about as good are listed as alternatives. Switch to one to see
+                its full order.
+              </li>
+              <li>
+                A rare order can&apos;t win on a lucky streak. An option needs at least{" "}
+                {MIN_BRANCH.toLocaleString()} games, and small samples are pulled toward the
+                average.
+              </li>
+              <li>
+                &ldquo;Low confidence&rdquo; means fewer than{" "}
+                {LOW_CONFIDENCE_GAMES.toLocaleString()} games back that step, or your rank
+                didn&apos;t have enough games and all ranks were used instead.
+              </li>
+              <li>
+                Plans are judged on games long enough to max two abilities, so they lean slightly
+                toward longer games.
+              </li>
+              <li>
+                {dataWindow.label}. Unlocks come at boon levels 0, 2, 4 and 7 (the fourth is the
+                ultimate), and each ability&apos;s upgrades cost 1, 2 and 5 points.
+              </li>
+            </ul>
+          </details>
         </div>
         <div className="flex items-end gap-3">
           <HeroPortrait id={hero.id} name={hero.name} size="card" />
