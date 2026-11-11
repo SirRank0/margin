@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { abilityOrders } from "@/data/ability-orders";
 import { dataWindow } from "@/data/data-window";
-import { buildPath, MIN_BRANCH, type Click } from "@/lib/ability-path";
+import {
+  applySwitch,
+  buildPath,
+  LOW_CONFIDENCE_GAMES,
+  MIN_BRANCH,
+  MIN_SHARE,
+  PRIOR_K,
+  SEPARATED_P,
+  type Click,
+} from "@/lib/ability-path";
 import { compareHeroNames } from "@/lib/hero-order";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { AbilityTip } from "@/components/ability-card";
@@ -52,6 +61,22 @@ export function AbilityPathSection() {
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
   }, []);
+  useEffect(() => {
+    if (!pinKey && !openKey) return;
+    function onDocClick(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      const tip = document.querySelector('[role="tooltip"]');
+      if (tip?.contains(target)) return;
+      // A tap on a row is handled by that row. Anything else dismisses.
+      if (listRef.current?.contains(target)) return;
+      setPinKey(null);
+      setOpenKey(null);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, [pinKey, openKey]);
+
   if (!hero || !path) return null;
   const names = new Map(hero.abilities.map((ability) => [ability.id, ability.name]));
   const overall = wilson(hero.wins, hero.matches);
@@ -73,41 +98,28 @@ export function AbilityPathSection() {
     hideTimer.current = window.setTimeout(() => setHoverKey(null), 160);
   }
 
-  useEffect(() => {
-    if (!pinKey && !openKey) return;
-    function onDocClick(event: MouseEvent) {
-      const target = event.target as Node | null;
-      if (!target) return;
-      const tip = document.querySelector('[role="tooltip"]');
-      if (tip?.contains(target)) return;
-      // A tap on a row is handled by that row. Anything else dismisses.
-      if (listRef.current?.contains(target)) return;
-      setPinKey(null);
-      setOpenKey(null);
-    }
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
-  }, [pinKey, openKey]);
-
   return (
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-2xl">
           <h2 className="font-display text-2xl text-fg">Ability order</h2>
           <p className="mt-1 text-pretty text-sm text-muted">
-            A line is the best only when its Wilson 95% interval does not overlap the line with the
-            most games, and both have at least 200 games. Otherwise the largest sample is shown and
-            marked tied. A line under 200 games is marked thin. The first four points use the
-            opening with the most games, unless another opening's range sits entirely above it.
-            That opening is one ability's 2-point rank, or the three 1-point ranks. Each 5-point
-            rank is chosen from the games that already bought the earlier ones, including the
-            ultimate. Before each 5, the 2-point ranks already bought are compared the same way.
-            When those games also record the next 5, that next result can change which 5 is picked
-            now. {dataWindow.label}. The next patch stays on the last 30 days until the median hero
-            has {dataWindow.enough.toLocaleString()} games in it. The ultimate is the fourth unlock.
-            On every ability the 2-point rank needs the 1-point rank, so it has cost 3, and the
-            5-point rank needs both, so it has cost 8. A 5 is never bought before the ultimate
-            unlocks. This is not part of the comp odds, and it is not split by rank.
+            Every public game's ability clicks, in order, form one tree. The path starts at the top
+            and, at each click, takes the next click whose win rate is best after pulling it toward
+            the win rate of the games that got this far ({PRIOR_K.toLocaleString()} games of pull), so
+            a small sample cannot win on luck. A next click needs at least{" "}
+            {MIN_BRANCH.toLocaleString()} games and at least {Math.round(MIN_SHARE * 100)}% of the
+            most-played next click's games. It is marked separated when there is at least a{" "}
+            {Math.round(SEPARATED_P * 100)}% chance it beats the runner-up shown next to it, and tied
+            otherwise. A tied click can be switched, and every click after it is walked again. When
+            the exact sequence runs out of games, the next click comes from all games that reached the
+            same ability ranks in any order, and if nothing has enough games the most-played legal
+            click is taken. Both are marked low confidence, as is any click under{" "}
+            {LOW_CONFIDENCE_GAMES.toLocaleString()} games. The list is the order games actually
+            clicked. Each ability is unlocked, then takes its 1-, 2- and 5-point ranks in turn, and the
+            ultimate unlocks only after all three basics. {dataWindow.label}. The next patch stays on
+            the last 30 days until the median hero has {dataWindow.enough.toLocaleString()} games in
+            it. This is not part of the comp odds, and it is not split by rank.
           </p>
         </div>
         <div className="flex items-end gap-3">
@@ -200,7 +212,7 @@ export function AbilityPathSection() {
         {path.decisions.map((decision) => {
           const chosen = wilson(decision.chosen.wins, decision.chosen.matches);
           const other = decision.other ? wilson(decision.other.wins, decision.other.matches) : null;
-          const switched = branches[decision.id] === decision.alternateId;
+          const switched = branches[decision.id] !== undefined;
           return (
             <div key={decision.id} className="text-sm">
               <p className="font-medium text-fg">
@@ -209,7 +221,13 @@ export function AbilityPathSection() {
                   {decision.separated ? "separated" : "tied"}
                 </span>
                 {decision.lowConfidence && (
-                  <span className="ml-2 font-normal text-muted" title={decision.source === "state" ? "From aggregate data, not this exact sequence." : "Under 1,000 games."}>
+                  <span className="ml-2 font-normal text-muted" title={
+                      decision.source === "fallback"
+                        ? "Nothing had enough games, so the most-played legal click was taken."
+                        : decision.source === "state"
+                          ? "From all games at the same ability ranks, not this exact sequence."
+                          : `Under ${LOW_CONFIDENCE_GAMES.toLocaleString()} games.`
+                    }>
                     low confidence
                   </span>
                 )}
@@ -221,26 +239,17 @@ export function AbilityPathSection() {
                   : ""}
                 {decision.other ? ` · ${(decision.pBetter * 100).toFixed(0)}%` : ""}
               </p>
-              {decision.alternateId !== null && decision.other && (
+              {(switched || (decision.alternateId !== null && decision.other)) && (
                 <button
                   type="button"
                   className="mt-1 text-amber underline-offset-2 hover:underline"
                   onClick={() =>
-                    setBranches((current) => {
-                      const next = { ...current };
-                      if (switched) delete next[decision.id];
-                      else {
-                        next[decision.id] = decision.alternateId!;
-                        for (const key of Object.keys(next)) {
-                          const n = Number(key.slice(6));
-                          if (n > decision.index) delete next[key];
-                        }
-                      }
-                      return next;
-                    })
+                    setBranches((current) =>
+                      applySwitch(current, decision.index, switched ? null : decision.alternateId),
+                    )
                   }
                 >
-                  {switched ? "Back to the main line" : `Switch to ${decision.other.name}`}
+                  {switched ? "Back to the main line" : `Switch to ${decision.other?.name ?? ""}`}
                 </button>
               )}
             </div>
