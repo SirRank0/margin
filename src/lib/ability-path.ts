@@ -31,7 +31,10 @@ export {
 export const MIN_BRANCH = 200;
 /** A choice under this share of its most-played sibling cannot be chosen. */
 export const MIN_SHARE = 0.05;
-/** Shrinkage strength in games. A choice is pulled toward its parent's rate. */
+/**
+ * Shrinkage strength in games. A choice is pulled toward its parent's rate.
+ * Tuned on held-out games: docs/prior-tuning.md (scripts/tune-prior.py).
+ */
 export const PRIOR_K = 2000;
 /** A decision is separated only when the chance it is better clears this. */
 export const SEPARATED_P = 0.95;
@@ -63,7 +66,13 @@ export type BandTree = {
   spend: Record<string, TreeNode>;
   /** Backoff for the spend trees, across unlock orders and strategies. */
   states: StateTable;
+  /** Games in this band. Absent on older data: the hero's totals are used. */
+  wins?: number;
+  matches?: number;
 };
+
+/** A rank band the data has: "all" is in the bundle, the others load on demand. */
+export type BandInfo = { band: string; label: string };
 
 export type HeroOrders = {
   id: number;
@@ -77,8 +86,12 @@ export type HeroOrders = {
 export type AbilityOrders = {
   fetchedAt: string;
   window?: string;
+  bands?: BandInfo[];
   heroes: HeroOrders[];
 };
+
+/** The band bundled with the site and used when a band is thin. */
+export const ALL_RANKS = "all";
 
 /** One click of the combined path, with where it falls on the boon schedule. */
 export type Step = {
@@ -102,8 +115,12 @@ export type Decision = {
   separated: boolean;
   pBetter: number;
   lowConfidence: boolean;
-  /** "fallback": nothing cleared the game floors, so the most-played legal option was taken. */
-  source: "tree" | "state" | "forced" | "fallback";
+  /**
+   * "state": all games at the same upgrades, not this exact line. "pooled": the rank
+   * band had too few games, so all ranks were used. "fallback": nothing cleared the
+   * game floors, so the most-played legal option was taken.
+   */
+  source: "tree" | "state" | "pooled" | "forced" | "fallback";
   chosen: Count & { name: string; rate: number };
   other: (Count & { name: string; rate: number }) | null;
   alternateId: number | null;
@@ -157,9 +174,9 @@ function posterior(child: Count, parentRate: number, k = PRIOR_K) {
 }
 
 /** Chance `a` has the higher true rate than `b`, both shrunk toward `parentRate`. */
-function chanceBetter(a: Count, b: Count, parentRate: number): number {
-  const pa = posterior(a, parentRate);
-  const pb = posterior(b, parentRate);
+function chanceBetter(a: Count, b: Count, parentRate: number, k = PRIOR_K): number {
+  const pa = posterior(a, parentRate, k);
+  const pb = posterior(b, parentRate, k);
   const scale = Math.sqrt(pa.variance + pb.variance);
   return scale > 0 ? normalCdf((pa.mean - pb.mean) / scale) : 0.5;
 }
@@ -454,7 +471,7 @@ export function applySwitch(overrides: Record<string, number>, index: number, va
   return next;
 }
 
-type Source = "tree" | "state";
+type Source = "tree" | "state" | "pooled";
 type Row = Count & { ability: number };
 type Option = Row & { score: number; source: Source };
 type Pick = {
@@ -471,32 +488,32 @@ function eligible(options: Row[]): Row[] {
   return options.filter((option) => option.matches >= MIN_BRANCH && option.matches >= MIN_SHARE * top);
 }
 
-function ranked(options: Row[], parentRate: number, source: Source): Option[] {
+function ranked(options: Row[], parentRate: number, source: Source, k: number): Option[] {
   return eligible(options)
-    .map((option) => ({ ...option, score: shrink(option, parentRate), source }))
+    .map((option) => ({ ...option, score: shrink(option, parentRate, k), source }))
     .sort((a, b) => b.score - a.score || b.matches - a.matches || a.ability - b.ability);
 }
 
-function pickChild(options: Row[], parentRate: number, source: Source): Pick | null {
-  const [chosen, rival = null] = ranked(options, parentRate, source);
+function pickChild(options: Row[], parentRate: number, source: Source, k: number): Pick | null {
+  const [chosen, rival = null] = ranked(options, parentRate, source, k);
   if (!chosen) return null;
-  const pBetter = rival ? chanceBetter(chosen, rival, parentRate) : 1;
+  const pBetter = rival ? chanceBetter(chosen, rival, parentRate, k) : 1;
   return {
     chosen,
     rival,
     pBetter,
     separated: rival ? pBetter >= SEPARATED_P : true,
-    lowConfidence: source === "state" || chosen.matches < LOW_CONFIDENCE_GAMES,
+    lowConfidence: source !== "tree" || chosen.matches < LOW_CONFIDENCE_GAMES,
     source,
   };
 }
 
 /** Most-played legal option when nothing clears the game floors. Always low confidence. */
-function fallbackPick(options: Row[], parentRate: number, source: Source): Pick | null {
+function fallbackPick(options: Row[], parentRate: number, source: Source, k: number): Pick | null {
   const chosen = options.slice().sort((a, b) => b.matches - a.matches || a.ability - b.ability)[0];
   if (!chosen) return null;
   return {
-    chosen: { ...chosen, score: shrink(chosen, parentRate), source },
+    chosen: { ...chosen, score: shrink(chosen, parentRate, k), source },
     rival: null,
     pBetter: 1,
     separated: true,
@@ -505,18 +522,23 @@ function fallbackPick(options: Row[], parentRate: number, source: Source): Pick 
   };
 }
 
-/** Pick by the rules, then apply a legal switch. `last` is the option when there is no data. */
+/**
+ * Pick by the rules from the first source with an eligible option (the band's
+ * tree, its state table, then all ranks), then apply a legal switch. `last` is
+ * the option when there is no data at all.
+ */
 function decide(
   sources: Array<{ rows: Row[]; source: Source }>,
   last: Row,
   parentRate: number,
   forced: number | undefined,
   legal: (value: number) => boolean,
+  k: number,
 ): Pick {
   let pick: Pick | null = null;
-  for (const entry of sources) pick ??= pickChild(entry.rows, parentRate, entry.source);
-  for (const entry of sources) pick ??= fallbackPick(entry.rows, parentRate, entry.source);
-  pick ??= fallbackPick([last], parentRate, "state") as Pick;
+  for (const entry of sources) pick ??= pickChild(entry.rows, parentRate, entry.source, k);
+  for (const entry of sources) pick ??= fallbackPick(entry.rows, parentRate, entry.source, k);
+  pick ??= fallbackPick([last], parentRate, "state", k) as Pick;
   if (forced !== undefined && forced !== pick.chosen.ability && legal(forced)) {
     let row: Row = { ability: forced, wins: 0, matches: 0 };
     let source: Source = "state";
@@ -529,7 +551,7 @@ function decide(
       }
     }
     pick = {
-      chosen: { ...row, score: shrink(row, parentRate), source },
+      chosen: { ...row, score: shrink(row, parentRate, k), source },
       rival: pick.chosen,
       pBetter: 0.5,
       separated: false,
@@ -558,15 +580,19 @@ function emptyPath(band: string): AbilityPath {
  * 3. The best concrete spend order inside the strategy: its own spend tree, every
  *    step kept inside the strategy (fitsStrategy).
  *
+ * `band` picks a rank band from `hero.bands`. When the band has too few games for
+ * a decision, all ranks are used for it, marked "pooled" and low confidence.
  * `clicks` is the combined, legal, ordered 16-click list of the chosen line.
  */
 export function buildPath(
   hero: HeroOrders,
   overrides: Record<string, number> = {},
-  band = "all",
-  options: { alternatives?: boolean } = {},
+  band = ALL_RANKS,
+  options: { alternatives?: boolean; priorK?: number } = {},
 ): AbilityPath {
-  const tree = hero.bands.find((entry) => entry.band === band) ?? hero.bands[0];
+  const k = options.priorK ?? PRIOR_K;
+  const tree = hero.bands.find((entry) => entry.band === band) ?? hero.bands.find((entry) => entry.band === ALL_RANKS) ?? hero.bands[0];
+  const pooled = tree && tree.band !== ALL_RANKS ? (hero.bands.find((entry) => entry.band === ALL_RANKS) ?? null) : null;
   const slots = hero.abilities.slice().sort((a, b) => a.slot - b.slot);
   const basics = slots.filter((ability) => ability.slot !== 4);
   if (!tree || slots.length !== 4 || basics.length !== 3 || slots.some((ability, at) => ability.slot !== at + 1)) {
@@ -588,22 +614,34 @@ export function buildPath(
       separated: pick.separated,
       pBetter: pick.pBetter,
       lowConfidence: pick.lowConfidence,
-      source: pick.source,
+      source: pick.chosen.source === "pooled" && pick.source !== "fallback" && pick.source !== "forced" ? "pooled" : pick.source,
       chosen: { wins: pick.chosen.wins, matches: pick.chosen.matches, name: nameOfValue(pick.chosen.ability), rate: pick.chosen.score },
       other: rival ? { wins: rival.wins, matches: rival.matches, name: nameOfValue(rival.ability), rate: rival.score } : null,
       alternateId: pick.separated ? null : (rival?.ability ?? null),
     });
   };
+  /** The band's rows, then all ranks' rows for the same decision. */
+  const banded = (
+    mine: ReadonlyArray<readonly [number, number, number]> | undefined,
+    all: ReadonlyArray<readonly [number, number, number]> | undefined,
+    legal: (value: number) => boolean,
+  ) => [
+    { rows: rows(mine, legal), source: "tree" as Source },
+    ...(pooled ? [{ rows: rows(all, legal), source: "pooled" as Source }] : []),
+  ];
 
   // 1. Unlock order, then the ultimate unlock.
-  const heroRate = hero.matches > 0 ? hero.wins / hero.matches : 0.5;
+  const bandWins = tree.wins ?? hero.wins;
+  const bandMatches = tree.matches ?? hero.matches;
+  const bandRate = bandMatches > 0 ? bandWins / bandMatches : hero.matches > 0 ? hero.wins / hero.matches : 0.5;
   const legalOrder = (code: number) => decodeOrder(code, hero.abilities) !== null;
   const orderPick = decide(
-    [{ rows: rows(tree.unlocks, legalOrder), source: "tree" }],
+    banded(tree.unlocks, pooled?.unlocks, legalOrder),
     { ability: 123, wins: 0, matches: 0 },
-    heroRate,
+    bandRate,
     overrides[decisionKey(0)],
     legalOrder,
+    k,
   );
   const code = orderPick.chosen.ability;
   const order = decodeOrder(code, hero.abilities) ?? basics.map((ability) => ability.id);
@@ -612,32 +650,35 @@ export function buildPath(
 
   // Holding the ultimate unlock is allowed only where games did it: a switch must
   // name an option from the data, or the level-7 default.
-  const ultRows = rows(tree.ult[String(code)], isLegalUltOption);
+  const ultSources = banded(tree.ult[String(code)], pooled?.ult[String(code)], isLegalUltOption);
   const ultPick = decide(
-    [{ rows: ultRows, source: "tree" }],
+    ultSources,
     { ability: 300, wins: 0, matches: 0 },
     orderRate,
     overrides[decisionKey(1)],
-    (option) => option === 300 || ultRows.some((row) => row.ability === option),
+    (option) => option === 300 || ultSources.some((entry) => entry.rows.some((row) => row.ability === option)),
+    k,
   );
   const ult = ultPick.chosen.ability;
   record("ult", "Ultimate unlock", ultPick, ultOptionLabel, null);
 
   // 2. Strategy, chosen as a whole.
-  const strategyRows = rows(tree.strategies?.[String(code)], isLegalStrategy);
+  const strategySources = banded(tree.strategies?.[String(code)], pooled?.strategies?.[String(code)], isLegalStrategy);
   const defaultStrategy = (slotOf(order[0], hero.abilities) * 10 + slotOf(order[1], hero.abilities)) * 10;
   const strategyPick = decide(
-    [{ rows: strategyRows, source: "tree" }],
+    strategySources,
     { ability: defaultStrategy, wins: 0, matches: 0 },
     orderRate,
     overrides[decisionKey(STRATEGY_DECISION)],
     isLegalStrategy,
+    k,
   );
   const strategy = strategyPick.chosen.ability;
   const labelOf = (value: number) => strategyLabel(value, hero.abilities);
   record("strategy", "Strategy", strategyPick, labelOf, null);
 
-  // 3. Concrete spend order inside the strategy.
+  // 3. Concrete spend order inside the strategy, in the band's tree and, when it
+  // runs out, all ranks' tree for the same line.
   const tiers = [0, 0, 0, 0];
   const atOf = (id: number) => slots.findIndex((ability) => ability.id === id);
   const legalSpend = (id: number) => {
@@ -647,31 +688,44 @@ export function buildPath(
   const spends: number[] = [];
   let spent = 0;
   let node: TreeNode | null = tree.spend[`${code}:${strategy}`] ?? null;
+  let poolNode: TreeNode | null = pooled?.spend[`${code}:${strategy}`] ?? null;
   let parentRate = strategyPick.chosen.score;
-  for (let k = 0; k < slots.length * TIERS; k += 1) {
+  const children = (at: TreeNode | null) => at?.[3].map((child) => [child[0], child[1], child[2]] as [number, number, number]);
+  for (let step = 0; step < slots.length * TIERS; step += 1) {
     const tierKey = tiers.join(",");
     // Backoff state for a candidate: tiers, unlocks used before buying it on the
     // schedule, and points spent. Each candidate reads its own state row.
-    const stateRows: Array<[number, number, number]> = [];
-    for (const ability of slots) {
-      if (!legalSpend(ability.id)) continue;
-      const trial = schedule({ order, ult, spends: [...spends, ability.id] }, hero.abilities);
-      const at = trial.findIndex((step) => step.decisionId === `spend-${spends.length}`);
-      const unlocksUsed = trial.slice(0, at).filter((step) => step.kind === "unlock").length;
-      const row = tree.states[`${tierKey}|${unlocksUsed}|${spent}`]?.find((entry) => entry[0] === ability.id);
-      if (row) stateRows.push(row);
-    }
+    const stateRows = (table: StateTable | undefined) => {
+      const found: Array<[number, number, number]> = [];
+      if (!table) return found;
+      for (const ability of slots) {
+        if (!legalSpend(ability.id)) continue;
+        const trial = schedule({ order, ult, spends: [...spends, ability.id] }, hero.abilities);
+        const at = trial.findIndex((entry) => entry.decisionId === `spend-${spends.length}`);
+        const unlocksUsed = trial.slice(0, at).filter((entry) => entry.kind === "unlock").length;
+        const row = table[`${tierKey}|${unlocksUsed}|${spent}`]?.find((entry) => entry[0] === ability.id);
+        if (row) found.push(row);
+      }
+      return found;
+    };
     const first = slots.find((ability) => legalSpend(ability.id));
     if (!first) break; // unreachable: fitsStrategy always leaves a move until all 12 are bought
     const pick = decide(
       [
-        { rows: rows(node?.[3].map((child) => [child[0], child[1], child[2]] as [number, number, number]), legalSpend), source: "tree" },
-        { rows: rows(stateRows, legalSpend), source: "state" },
+        { rows: rows(children(node), legalSpend), source: "tree" },
+        { rows: rows(stateRows(tree.states), legalSpend), source: "state" },
+        ...(pooled
+          ? [
+              { rows: rows(children(poolNode), legalSpend), source: "pooled" as Source },
+              { rows: rows(stateRows(pooled.states), legalSpend), source: "pooled" as Source },
+            ]
+          : []),
       ],
       { ability: first.id, wins: 0, matches: 0 },
       parentRate,
-      overrides[decisionKey(DECISION_KEYS.length + k)],
+      overrides[decisionKey(DECISION_KEYS.length + step)],
       legalSpend,
+      k,
     );
     const id = pick.chosen.ability;
     const at = atOf(id);
@@ -681,12 +735,13 @@ export function buildPath(
     const click: Click = { ability: id, rank: RANK_OF_TIER[tiers[at]] };
     record("spend", `${nameOf(id)} ${TIER_LABEL[tiers[at]]}`, pick, nameOf, click);
     node = node ? (node[3].find((child) => child[0] === id) ?? null) : null;
+    poolNode = poolNode ? (poolNode[3].find((child) => child[0] === id) ?? null) : null;
     parentRate = pick.chosen.score;
   }
 
   const steps = schedule({ order, ult, spends }, hero.abilities);
   const path: AbilityPath = {
-    clicks: steps.map((step) => step.click),
+    clicks: steps.map((entry) => entry.click),
     steps,
     decisions,
     unlockOrder: order,
@@ -696,14 +751,16 @@ export function buildPath(
     band: tree.band,
   };
 
-  // Near-equal strategies: the best one cannot be told apart from them at SEPARATED_P.
+  // Near-equal strategies: the best one cannot be told apart from them at
+  // SEPARATED_P. They come from the same rows the strategy was picked from.
   if (options.alternatives !== false) {
-    const [best, ...rest] = ranked(strategyRows, orderRate, "tree");
+    const from = strategySources.find((entry) => ranked(entry.rows, orderRate, entry.source, k).length > 0);
+    const [best, ...rest] = from ? ranked(from.rows, orderRate, from.source, k) : [];
     if (best) {
       const keep = applySwitch(overrides, STRATEGY_DECISION, null);
       path.alternatives = [best, ...rest]
         .filter((option) => option.ability !== strategy)
-        .map((option) => ({ option, p: option === best ? 0.5 : chanceBetter(best, option, orderRate) }))
+        .map((option) => ({ option, p: option === best ? 0.5 : chanceBetter(best, option, orderRate, k) }))
         .filter(({ option, p }) => option === best || p < SEPARATED_P)
         .slice(0, MAX_ALTERNATIVES)
         .map(({ option, p }) => ({
@@ -714,7 +771,7 @@ export function buildPath(
           rate: option.score,
           best: option === best,
           pBestBetter: p,
-          path: buildPath(hero, { ...keep, [decisionKey(STRATEGY_DECISION)]: option.ability }, band, { alternatives: false }),
+          path: buildPath(hero, { ...keep, [decisionKey(STRATEGY_DECISION)]: option.ability }, band, { ...options, alternatives: false }),
         }));
     }
   }

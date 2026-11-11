@@ -52,6 +52,22 @@ option. Strategies within a 95% chance of the best are shown as alternatives. Th
 chosen decisions are laid onto the boon schedule: an unlock is used when it arrives,
 an upgrade is bought, in spend order, as soon as it is unlocked and affordable.
 
+## Rank bands
+
+`min_average_badge` / `max_average_badge` keep matches whose average badge is in a
+range. A badge is tier * 10 + subrank (1..6), tiers 1 Initiate to 11 Eternus, as in
+`scripts/fetch-rank-slices.py`. The board has all ranks plus four coarse bands:
+Initiate to Acolyte (11-36), Sentinel to Ritualist (41-66), Emissary to Phantom
+(71-96), Ascendant and Eternus (101-116). Only about 17% of games carry an
+average badge, so bands are much thinner than all ranks. Where a band has no
+eligible option for a pick, the board uses all ranks for that pick and marks it
+"pooled" and low confidence. All ranks ships in the bundle; the bands are JSON files
+in `public/ability-orders/<band>/<heroId>.json`, loaded when picked.
+
+## Shrinkage strength
+
+PRIOR_K was tuned on held-out games: see `docs/prior-tuning.md`.
+
 ## Strategy signature
 
 A strategy is **(first ability maxed, second ability maxed, shape before the first

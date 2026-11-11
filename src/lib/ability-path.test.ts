@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import {
   applySwitch,
@@ -10,6 +10,7 @@ import {
   LOW_CONFIDENCE_GAMES,
   MAX_ALTERNATIVES,
   MIN_BRANCH,
+  ALL_RANKS,
   PRIOR_K,
   SEPARATED_P,
   splitOrder,
@@ -59,8 +60,8 @@ function add(table: Array<[number, number, number]>, key: number, w: number, n: 
 }
 
 /** Same construction as scripts/fetch-ability-orders.py, without its pruning. */
-function hero(rows: Row[], extraStates: StateTable = {}, abilities = ABILITIES): HeroOrders {
-  const band: BandTree = { band: "all", label: "All ranks", unlocks: [], ult: {}, strategies: {}, spend: {}, states: {} };
+function hero(rows: Row[], extraStates: StateTable = {}, abilities = ABILITIES, bandId = ALL_RANKS): HeroOrders {
+  const band: BandTree = { band: bandId, label: bandId, unlocks: [], ult: {}, strategies: {}, spend: {}, states: {} };
   const slots = abilities.slice().sort((a, b) => a.slot - b.slot).map((ability) => ability.id);
   let wins = 0;
   let matches = 0;
@@ -97,7 +98,15 @@ function hero(rows: Row[], extraStates: StateTable = {}, abilities = ABILITIES):
     }
   }
   for (const [key, extra] of Object.entries(extraStates)) band.states[key] = extra;
+  band.wins = wins;
+  band.matches = matches;
   return { id: 1, name: "Fixture", wins, matches, abilities, bands: [band] };
+}
+
+/** A hero with all ranks from `all` and one more rank band from `banded`. */
+function withBand(all: Row[], bandId: string, banded: Row[]): HeroOrders {
+  const base = hero(all);
+  return { ...base, bands: [...base.bands, hero(banded, {}, ABILITIES, bandId).bands[0]] };
 }
 
 /** `order` unlocks, then `head` upgrades, then the rest in slot order. */
@@ -490,5 +499,108 @@ test("property: every hero in src/data/ability-orders.ts, and every alternative,
     for (const [code] of entry.bands[0].unlocks) {
       assertObeysRules(buildPath(entry, { "unlock-order": code }, "all", { alternatives: false }), entry.abilities, `${entry.name} ${code}`);
     }
+  }
+});
+
+// ---------------------------------------------------------------- rank bands and the tuned prior
+
+test("rank bands: the chosen band's data picks the path; all ranks stays the default", () => {
+  const all = [
+    { seq: seq(ABCU, A, A, A, B, B, B), wins: 60_000, matches: 100_000 }, // 120 wins at all ranks
+    { seq: seq(ABCU, B, B, B, A, A, A), wins: 45_000, matches: 100_000 },
+  ];
+  const high = [
+    { seq: seq(ABCU, A, A, A, B, B, B), wins: 4_000, matches: 10_000 },
+    { seq: seq(ABCU, B, B, B, A, A, A), wins: 6_500, matches: 10_000 }, // 210 wins in this band
+  ];
+  const h = withBand(all, "high", high);
+  assert.equal(buildPath(h).strategy, 120);
+  assert.equal(buildPath(h).band, ALL_RANKS);
+  const banded = buildPath(h, {}, "high");
+  assert.equal(banded.band, "high");
+  assert.equal(banded.strategy, 210);
+  assert.equal(banded.decisions[STRATEGY_DECISION].source, "tree");
+  assert.equal(banded.decisions[STRATEGY_DECISION].chosen.matches, 10_000, "the band's own games");
+  assertObeysRules(banded, ABILITIES);
+  assert.equal(buildPath(h, {}, "no-such-band").band, ALL_RANKS, "an unknown band falls back to all ranks");
+});
+
+test("rank bands: a thin band falls back to all ranks for each pick, marked pooled and low confidence", () => {
+  const all = [
+    { seq: seq(ABCU, A, A, A, B, B, B), wins: 60_000, matches: 100_000 },
+    { seq: seq(ABCU, B, B, B, A, A, A), wins: 45_000, matches: 100_000 },
+  ];
+  // 150 games: under MIN_BRANCH for every pick.
+  const thin = [{ seq: seq([B, A, C, U], B, B, B, C, C, C), wins: 100, matches: 150 }];
+  const path = buildPath(withBand(all, "thin", thin), {}, "thin");
+  assert.equal(path.band, "thin");
+  assert.equal(path.decisions[0].source, "pooled");
+  assert.equal(path.decisions[0].value, 123, "the all-ranks unlock order, not the band's thin one");
+  assert.equal(path.strategy, 120);
+  for (const decision of path.decisions) {
+    assert.ok(decision.lowConfidence, `${decision.id} is low confidence`);
+    assert.ok(["pooled", "state", "fallback"].includes(decision.source), `${decision.id} is ${decision.source}`);
+  }
+  assertObeysRules(path, ABILITIES);
+});
+
+test("the tuned PRIOR_K is the one docs/prior-tuning.md chose, and it is what shrinks", () => {
+  const doc = readFileSync(new URL("../../docs/prior-tuning.md", import.meta.url), "utf8");
+  const match = /PRIOR_K = ([\d,]+)/.exec(doc);
+  assert.ok(match, "docs/prior-tuning.md states PRIOR_K");
+  assert.equal(PRIOR_K, Number(match[1].replace(/,/g, "")));
+  const h = hero([
+    { seq: seq(ABCU, A, A, A, B, B, B), wins: 3_000, matches: 5_000 },
+    { seq: seq(ABCU, B, B, B, A, A, A), wins: 2_000, matches: 5_000 },
+  ]);
+  const path = buildPath(h);
+  const order = path.decisions[0];
+  const parent = h.wins / h.matches;
+  assert.ok(Math.abs(order.chosen.rate - (order.chosen.wins + PRIOR_K * parent) / (order.chosen.matches + PRIOR_K)) < 1e-12);
+  const strategy = path.decisions[STRATEGY_DECISION];
+  assert.ok(Math.abs(strategy.chosen.rate - (3_000 + PRIOR_K * order.chosen.rate) / (5_000 + PRIOR_K)) < 1e-12);
+  const other = buildPath(h, {}, ALL_RANKS, { priorK: PRIOR_K * 4 }).decisions[STRATEGY_DECISION];
+  assert.notEqual(other.chosen.rate, strategy.chosen.rate, "priorK overrides it for tuning");
+});
+
+test("property: every hero in every rank band file obeys the rules, deterministically", () => {
+  const source = readFileSync(new URL("../data/ability-orders.ts", import.meta.url), "utf8");
+  const orders = JSON.parse(source.slice(source.indexOf("= {") + 2, source.lastIndexOf("}") + 1)) as AbilityOrders;
+  const dir = new URL("../../public/ability-orders/", import.meta.url);
+  assert.ok(existsSync(dir), "public/ability-orders exists");
+  const bands = (orders.bands ?? []).filter((band) => band.band !== ALL_RANKS);
+  assert.ok(bands.length > 0, "the data lists rank bands");
+  let checked = 0;
+  for (const band of bands) {
+    const files = readdirSync(new URL(`${band.band}/`, dir));
+    assert.equal(files.length, orders.heroes.length, `${band.band} has a file per hero`);
+    for (const entry of orders.heroes) {
+      const tree = JSON.parse(readFileSync(new URL(`${band.band}/${entry.id}.json`, dir), "utf8")) as BandTree;
+      assert.equal(tree.band, band.band);
+      const banded: HeroOrders = { ...entry, bands: [...entry.bands, tree] };
+      const path = buildPath(banded, {}, band.band);
+      assert.equal(path.band, band.band);
+      assertObeysRules(path, entry.abilities, `${entry.name} ${band.band}`);
+      assert.deepEqual(buildPath(banded, {}, band.band), path, `${entry.name} ${band.band} is deterministic`);
+      checked += 1;
+    }
+  }
+  assert.equal(checked, bands.length * orders.heroes.length);
+});
+
+test("property: random thin and full bands always give a full legal path", () => {
+  const random = rng(4242);
+  for (let trial = 0; trial < 150; trial += 1) {
+    const all = Array.from({ length: 1 + Math.floor(random() * 30) }, () => randomRow(random));
+    const banded = Array.from({ length: Math.floor(random() * 10) }, () => {
+      const row = randomRow(random);
+      const scale = random() < 0.5 ? 0.01 : 0.3;
+      const matches = Math.max(1, Math.floor(row.matches * scale));
+      return { ...row, matches, wins: Math.min(matches, Math.floor(row.wins * scale)) };
+    });
+    const h = withBand(all, "band", banded);
+    const path = buildPath(h, {}, "band");
+    assertObeysRules(path, ABILITIES, `band trial ${trial}`);
+    assert.deepEqual(buildPath(h, {}, "band"), path);
   }
 });
