@@ -34,8 +34,9 @@ function rankTitle(rank: Click["rank"]) {
 export function AbilityPathSection() {
   const heroes = [...abilityOrders.heroes].sort((a, b) => compareHeroNames(a.name, b.name));
   const [heroId, setHeroId] = useState(heroes.find((hero) => hero.id === 84)?.id ?? heroes[0]?.id ?? 0);
+  const [branches, setBranches] = useState<Record<string, number>>({});
   const hero = heroes.find((row) => row.id === heroId) ?? heroes[0];
-  const path = useMemo(() => (hero ? buildPath(hero) : null), [hero]);
+  const path = useMemo(() => (hero ? buildPath(hero, branches) : null), [hero, branches]);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [pinKey, setPinKey] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -115,7 +116,7 @@ export function AbilityPathSection() {
           Hero
           <select
             value={hero.id}
-            onChange={(event) => setHeroId(Number(event.target.value))}
+            onChange={(event) => { setHeroId(Number(event.target.value)); setBranches({}); }}
             className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
           >
             {heroes.map((row) => (
@@ -199,30 +200,49 @@ export function AbilityPathSection() {
         {path.decisions.map((decision) => {
           const chosen = wilson(decision.chosen.wins, decision.chosen.matches);
           const other = decision.other ? wilson(decision.other.wins, decision.other.matches) : null;
+          const switched = branches[decision.id] === decision.alternateId;
           return (
-            <div key={decision.label} className="text-sm">
+            <div key={decision.id} className="text-sm">
               <p className="font-medium text-fg">
                 {decision.label}
-                <span
-                  className="ml-2 font-normal text-amber"
-                  title={
-                    decision.chosen.matches < MIN_BRANCH
-                      ? "Under 200 games, so this line cannot win the comparison."
-                      : decision.separated
-                        ? "This 95% interval sits entirely above the line with the most games."
-                        : "The 95% intervals overlap, so the larger sample is kept."
-                  }
-                >
-                  {decision.chosen.matches < MIN_BRANCH ? "thin" : decision.separated ? "separated" : "tied"}
+                <span className="ml-2 font-normal text-amber" title={decision.separated ? "At least a 95% chance this line is better." : "Under a 95% chance, so the lines are tied."}>
+                  {decision.separated ? "separated" : "tied"}
                 </span>
+                {decision.lowConfidence && (
+                  <span className="ml-2 font-normal text-muted" title={decision.source === "state" ? "From aggregate data, not this exact sequence." : "Under 1,000 games."}>
+                    low confidence
+                  </span>
+                )}
               </p>
               <p className="mt-1 text-pretty text-muted">
-                {decision.chosen.name} {pct(chosen.p)} ({pct(chosen.low)}–{pct(chosen.high)}) ·{" "}
-                {compact(decision.chosen.matches)}
+                {decision.chosen.name} {pct(decision.chosen.rate)} shrunk · {pct(chosen.p)} ({pct(chosen.low)}–{pct(chosen.high)}) · {compact(decision.chosen.matches)}
                 {decision.other && other
-                  ? `. ${decision.other.name} ${pct(other.p)} (${pct(other.low)}–${pct(other.high)}) · ${compact(decision.other.matches)}`
+                  ? `. ${decision.other.name} ${pct(decision.other.rate)} shrunk · ${pct(other.p)} · ${compact(decision.other.matches)}`
                   : ""}
+                {decision.other ? ` · ${(decision.pBetter * 100).toFixed(0)}%` : ""}
               </p>
+              {decision.alternateId !== null && decision.other && (
+                <button
+                  type="button"
+                  className="mt-1 text-amber underline-offset-2 hover:underline"
+                  onClick={() =>
+                    setBranches((current) => {
+                      const next = { ...current };
+                      if (switched) delete next[decision.id];
+                      else {
+                        next[decision.id] = decision.alternateId!;
+                        for (const key of Object.keys(next)) {
+                          const n = Number(key.slice(6));
+                          if (n > decision.index) delete next[key];
+                        }
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  {switched ? "Back to the main line" : `Switch to ${decision.other.name}`}
+                </button>
+              )}
             </div>
           );
         })}

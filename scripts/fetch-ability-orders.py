@@ -1,7 +1,6 @@
-"""Snapshot ability-order branches for every hero.
+"""Build a prefix tree of ability sequences for every hero.
 
-The board does not call the API. Each row is kept only when it has at least
-KEEP games. The page's comparison then ignores branches under 200 games.
+The board walks the tree. It does not stitch separate tables.
 """
 
 import json
@@ -18,7 +17,6 @@ from patch_window import resolve
 API = "https://api.deadlock-api.com"
 OUT = Path(__file__).resolve().parents[1] / "src" / "data" / "ability-orders.ts"
 KEEP = 30
-COST = {1: 0, 2: 1, 3: 2, 4: 5}
 
 
 def get(path, params=None):
@@ -30,37 +28,85 @@ def get(path, params=None):
         return json.load(resp)
 
 
-def add(bucket, key, wins, matches):
-    row = bucket[key]
-    row[0] += wins
-    row[1] += matches
+class Node:
+    __slots__ = ("wins", "matches", "end_matches", "children")
+
+    def __init__(self):
+        self.wins = 0
+        self.matches = 0
+        self.end_matches = 0
+        self.children = {}
+
+    def add(self, wins, matches, ending):
+        self.wins += wins
+        self.matches += matches
+        if ending:
+            self.end_matches += matches
 
 
-def events(seq):
-    seen = {}
-    out = []
-    ap = 0
-    for ability in seq:
-        seen[ability] = seen.get(ability, 0) + 1
-        rank = seen[ability]
-        if rank > 4:
-            continue
-        out.append((ability, rank, ap))
-        ap += COST[rank]
+def build(rows, slot_ids):
+    """Insert sequences into a trie and a rank-vector backoff table.
+
+    slot_ids is the four ability ids in slot order. The state key is the
+    four ranks (0..4) in that order, so games that reached the same ranks
+    by different orders share a backoff row.
+    """
+    known = set(slot_ids)
+    root = Node()
+    states = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    for row in rows:
+        seen = defaultdict(int)
+        clean = []
+        for ability in row["abilities"]:
+            if ability not in known or seen[ability] >= 4:
+                continue
+            seen[ability] += 1
+            clean.append(ability)
+        w, n = row["wins"], row["matches"]
+        node = root
+        node.add(w, n, ending=not clean)
+        ranks = [0, 0, 0, 0]
+        index_of = {ability: i for i, ability in enumerate(slot_ids)}
+        for pos, ability in enumerate(clean):
+            key = ",".join(str(r) for r in ranks)
+            bucket = states[key][ability]
+            bucket[0] += w
+            bucket[1] += n
+            ranks[index_of[ability]] += 1
+            child = node.children.get(ability)
+            if child is None:
+                child = Node()
+                node.children[ability] = child
+            child.add(w, n, ending=pos == len(clean) - 1)
+            node = child
+    return root, states
+
+
+def prune(node):
+    node.children = {
+        ability: child
+        for ability, child in node.children.items()
+        if child.matches >= KEEP and prune(child) is not None
+    }
+    return node
+
+
+def serialize(node, ability_id):
+    children = sorted(node.children.items(), key=lambda item: -item[1].matches)
+    return [ability_id, node.wins, node.matches, [serialize(child, ability) for ability, child in children]]
+
+
+def serialize_states(states):
+    out = {}
+    for key, nxt in states.items():
+        rows = [[ability, w, n] for ability, (w, n) in nxt.items() if n >= KEEP]
+        if rows:
+            rows.sort(key=lambda row: -row[2])
+            out[key] = rows
     return out
 
 
-def named(bucket):
-    rows = [
-        {"ability": key, "wins": wins, "matches": matches}
-        for key, (wins, matches) in bucket.items()
-        if matches >= KEEP
-    ]
-    rows.sort(key=lambda row: row["matches"], reverse=True)
-    return rows
-
-
-def hero_orders(hero, names, window):
+def hero_tree(hero, names, window):
     rows = get(
         "/v1/analytics/ability-order-stats",
         {"hero_id": hero["id"], "min_matches": 1, **window},
@@ -71,184 +117,23 @@ def hero_orders(hero, names, window):
         found = names.get((hero["id"], class_name))
         if found:
             abilities.append({"id": found[0], "name": found[1], "slot": slot})
-    known = {ability["id"] for ability in abilities}
-    ult = next((ability["id"] for ability in abilities if ability["slot"] == 4), None)
-
-    open_upgrade = defaultdict(lambda: [0, 0])
-    prefix3 = defaultdict(lambda: [0, 0])
-    prefix4 = defaultdict(lambda: [0, 0])
-    max_by_opening = defaultdict(lambda: [0, 0])
-    t2_by_opening = defaultdict(lambda: [0, 0])
-    before = defaultdict(lambda: [0, 0])
-    five_before_ult = defaultdict(lambda: [0, 0])
-    first_max = defaultdict(lambda: [0, 0])
-    max_steps = defaultdict(lambda: [0, 0])
-    t2_before_step = defaultdict(lambda: [0, 0])
-    continuation = defaultdict(lambda: [0, 0])
-    ult_before = [0, 0]
-    five_before = [0, 0]
-    early_spread = [0, 0]
-    early_rush = defaultdict(lambda: [0, 0])
-    wins = matches = 0
-    basics = {ability["id"] for ability in abilities if ability["slot"] != 4}
-
-    for row in rows:
-        seq = [ability for ability in row["abilities"] if ability in known]
-        w, n = row["wins"], row["matches"]
-        wins += w
-        matches += n
-        if len(seq) >= 2 and seq[1] == seq[0]:
-            add(open_upgrade, seq[0], w, n)
-        if len(seq) >= 3:
-            add(prefix3, (seq[0], seq[1], seq[2]), w, n)
-        if len(seq) >= 4:
-            add(prefix4, (seq[0], seq[1], seq[2], seq[3]), w, n)
-        opening = tuple(seq[:3]) if len(seq) >= 3 else None
-        counts = {}
-        order = []
-        for ability in seq:
-            counts[ability] = counts.get(ability, 0) + 1
-            if counts[ability] == 4:
-                if not order:
-                    add(first_max, ability, w, n)
-                add(max_steps, (tuple(order), ability), w, n)
-                if opening is not None:
-                    add(max_by_opening, (opening, tuple(order), ability), w, n)
-                order.append(ability)
-        ev = events(seq)
-        basic_t2 = [event for event in ev if event[0] != ult and event[1] == 3]
-        fives = [event for event in ev if event[1] == 4]
-        ult_t2 = next((event for event in ev if event[0] == ult and event[1] == 3), None)
-        if fives and fives[0][0] != ult and basic_t2:
-            five_ap = fives[0][2]
-            done = tuple(sorted(event[0] for event in basic_t2 if event[2] < five_ap))
-            add(before, (done, fives[0][0]), w, n)
-        maxed = []
-        for event in fives:
-            prior = tuple(maxed)
-            done = tuple(sorted(
-                other[0] for other in basic_t2
-                if other[0] != event[0] and other[2] < event[2]
-            ))
-            add(t2_before_step, (prior, event[0], done), w, n)
-            if opening is not None:
-                add(t2_by_opening, (opening, prior, event[0], done), w, n)
-            maxed.append(event[0])
-        for index, event in enumerate(fives[:-1]):
-            nxt = fives[index + 1]
-            add(continuation, (tuple(fives[:index]), event[0], nxt[0]), w, n)
-        if ult is not None and (ult_t2 or fives):
-            if ult_t2 and (not fives or ult_t2[2] <= fives[0][2]):
-                ult_before[0] += w
-                ult_before[1] += n
-            elif fives:
-                five_before[0] += w
-                five_before[1] += n
-                add(five_before_ult, fives[0][0], w, n)
-        seen = {}
-        ap = 0
-        pointed = set()
-        rushed = None
-        for ability in seq:
-            seen[ability] = seen.get(ability, 0) + 1
-            rank = seen[ability]
-            if rank > 4:
-                continue
-            cost = COST[rank]
-            if ap + cost > 4:
-                break
-            if ability in basics and rank == 2:
-                pointed.add(ability)
-            elif ability in basics and rank == 3 and rushed is None:
-                rushed = ability
-            ap += cost
-        if rushed is not None and len(pointed) < 3:
-            early_rush[rushed][0] += w
-            early_rush[rushed][1] += n
-        elif rushed is None and len(pointed) >= 3:
-            early_spread[0] += w
-            early_spread[1] += n
-
-    prefixes = [
-        {"clicks": list(key), "wins": w, "matches": n}
-        for key, (w, n) in prefix3.items()
-        if n >= KEEP
-    ]
-    prefixes.sort(key=lambda row: row["matches"], reverse=True)
-    prefixes4 = [
-        {"clicks": list(key), "wins": w, "matches": n}
-        for key, (w, n) in prefix4.items()
-        if n >= KEEP
-    ]
-    prefixes4.sort(key=lambda row: row["matches"], reverse=True)
-    by_opening = []
-    openings = {}
-    for (opening, prior, ability), (w, n) in max_by_opening.items():
-        if n < KEEP:
-            continue
-        bucket = openings.setdefault(opening, [])
-        bucket.append({"prefix": list(prior), "ability": ability, "wins": w, "matches": n})
-    for opening, steps in openings.items():
-        steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
-        by_opening.append({"opening": list(opening), "steps": steps})
-    by_opening.sort(key=lambda row: -sum(step["matches"] for step in row["steps"] if not row["steps"] or step["prefix"] == []))
-    t2_openings = {}
-    for (opening, prior, five, done), (w, n) in t2_by_opening.items():
-        if n < KEEP:
-            continue
-        bucket = t2_openings.setdefault(opening, [])
-        bucket.append({"prefix": list(prior), "five": five, "t2s": list(done), "wins": w, "matches": n})
-    t2_by = []
-    for opening, steps in t2_openings.items():
-        steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
-        t2_by.append({"opening": list(opening), "steps": steps})
-    fives = [
-        {"t2s": list(key[0]), "five": key[1], "wins": w, "matches": n}
-        for key, (w, n) in before.items()
-        if n >= KEEP
-    ]
-    fives.sort(key=lambda row: row["matches"], reverse=True)
-    steps = [
-        {"prefix": list(key[0]), "ability": key[1], "wins": w, "matches": n}
-        for key, (w, n) in max_steps.items()
-        if n >= KEEP
-    ]
-    steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
-    t2_steps = [
-        {"prefix": list(key[0]), "five": key[1], "t2s": list(key[2]), "wins": w, "matches": n}
-        for key, (w, n) in t2_before_step.items()
-        if n >= KEEP
-    ]
-    t2_steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
-    continuations = [
-        {"prefix": list(key[0]), "five": key[1], "nextFive": key[2], "wins": w, "matches": n}
-        for key, (w, n) in continuation.items()
-        if n >= KEEP
-    ]
-    continuations.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
+    slot_ids = [ability["id"] for ability in abilities]
+    wins = sum(row["wins"] for row in rows)
+    matches = sum(row["matches"] for row in rows)
+    root, states = build(rows, slot_ids)
+    prune(root)
     return {
         "id": hero["id"],
         "name": hero["name"],
         "wins": wins,
         "matches": matches,
         "abilities": abilities,
-        "openUpgrade": named(open_upgrade),
-        "prefix3": prefixes,
-        "prefix4": prefixes4,
-        "maxByOpening": by_opening,
-        "t2ByOpening": t2_by,
-        "beforeFive": fives,
-        "fiveBeforeUlt": named(five_before_ult),
-        "firstMax": named(first_max),
-        "ultBeforeFive": {"wins": ult_before[0], "matches": ult_before[1]},
-        "fiveBeforeUltAny": {"wins": five_before[0], "matches": five_before[1]},
-        "earlyPoints": {
-            "spread": {"wins": early_spread[0], "matches": early_spread[1]},
-            "rush": named(early_rush),
-        },
-        "maxSteps": steps,
-        "t2BeforeStep": t2_steps,
-        "continuation": continuations,
+        "bands": [{
+            "band": "all",
+            "label": "All ranks",
+            "root": serialize(root, 0),
+            "states": serialize_states(states),
+        }],
     }
 
 
@@ -272,23 +157,32 @@ def main():
     built = []
     for hero in playable:
         try:
-            row = hero_orders(hero, names, window)
+            row = hero_tree(hero, names, window)
         except Exception as exc:
             print("skip", hero.get("name"), exc)
             continue
         if row["matches"] <= 0 or len(row["abilities"]) < 4:
-            print("skip", hero["name"], "matches", row["matches"], "abilities", len(row["abilities"]))
+            print("skip", hero["name"], "matches", row["matches"])
             continue
         built.append(row)
-        print(f"{hero['name']:16} {row['matches']:7} games")
-    payload = {"fetchedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "heroes": built}
+        nodes = count_nodes(row["bands"][0]["root"])
+        print(f"{hero['name']:16} {row['matches']:7} games  {nodes:5} nodes")
+    payload = {
+        "fetchedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "window": info["label"],
+        "heroes": built,
+    }
     text = (
-        "// Ability-order branches. The board reads this file and does not call the API.\n"
+        "// Ability-order tree. The board reads this file and does not call the API.\n"
         "import type { AbilityOrders } from \"@/lib/ability-path\";\n\n"
         f"export const abilityOrders: AbilityOrders = {json.dumps(payload, separators=(',', ':'))};\n"
     )
     OUT.write_text(text)
-    print("wrote", OUT, "heroes", len(built))
+    print("wrote", OUT, "heroes", len(built), "bytes", OUT.stat().st_size)
+
+
+def count_nodes(node):
+    return 1 + sum(count_nodes(child) for child in node[3])
 
 
 if __name__ == "__main__":
