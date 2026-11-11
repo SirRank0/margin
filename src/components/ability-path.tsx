@@ -9,6 +9,8 @@ import {
   MIN_SHARE,
   PRIOR_K,
   SEPARATED_P,
+  TOTAL_POINTS,
+  ultOptionLabel,
   type Click,
 } from "@/lib/ability-path";
 import { compareHeroNames } from "@/lib/hero-order";
@@ -34,7 +36,7 @@ function rankLabel(rank: Click["rank"]) {
 }
 
 function rankTitle(rank: Click["rank"]) {
-  if (rank === 0) return "Ability unlock. The ultimate is the fourth of these, once the soul gate opens.";
+  if (rank === 0) return "Ability unlock. Uses an unlock, not points. The ultimate's unlock is the fourth, at boon level 7.";
   if (rank === 1) return "1 ability point. Required before the 2-point rank.";
   if (rank === 2) return "2 ability points. This ability has now had 3 points spent on it.";
   return "5 ability points. This ability has now had 8 points spent on it.";
@@ -104,22 +106,28 @@ export function AbilityPathSection() {
         <div className="max-w-2xl">
           <h2 className="font-display text-2xl text-fg">Ability order</h2>
           <p className="mt-1 text-pretty text-sm text-muted">
-            Every public game's ability clicks, in order, form one tree. The path starts at the top
-            and, at each click, takes the next click whose win rate is best after pulling it toward
-            the win rate of the games that got this far ({PRIOR_K.toLocaleString()} games of pull), so
-            a small sample cannot win on luck. A next click needs at least{" "}
-            {MIN_BRANCH.toLocaleString()} games and at least {Math.round(MIN_SHARE * 100)}% of the
-            most-played next click's games. It is marked separated when there is at least a{" "}
-            {Math.round(SEPARATED_P * 100)}% chance it beats the runner-up shown next to it, and tied
-            otherwise. A tied click can be switched, and every click after it is walked again. When
-            the exact sequence runs out of games, the next click comes from all games that reached the
-            same ability ranks in any order, and if nothing has enough games the most-played legal
-            click is taken. Both are marked low confidence, as is any click under{" "}
-            {LOW_CONFIDENCE_GAMES.toLocaleString()} games. The list is the order games actually
-            clicked. Each ability is unlocked, then takes its 1-, 2- and 5-point ranks in turn, and the
-            ultimate unlocks only after all three basics. {dataWindow.label}. The next patch stays on
-            the last 30 days until the median hero has {dataWindow.enough.toLocaleString()} games in
-            it. This is not part of the comp odds, and it is not split by rank.
+            Unlocking and upgrading are separate. Unlocks arrive at boon levels 0, 2, 4 and 7: the
+            first three go on basic abilities in any order, the fourth is the ultimate&apos;s. Points
+            arrive at the other levels, {TOTAL_POINTS} in all, and each ability&apos;s 1-, 2- and
+            5-point upgrades are bought in turn. So the path makes two decisions from public games.
+            First the order of the three basic unlocks, and where the ultimate unlock went. Then,
+            under that unlock order, the order the 12 upgrades were bought in. Upgrades bought within
+            a few seconds of each other count as one purchase, so their order inside it is not a
+            choice. Each choice takes the best win rate after pulling it toward the win rate of the
+            games that got this far ({PRIOR_K.toLocaleString()} games of pull), so a small sample
+            cannot win on luck. A choice needs at least {MIN_BRANCH.toLocaleString()} games and at
+            least {Math.round(MIN_SHARE * 100)}% of the most-played choice&apos;s games. It is marked
+            separated when there is at least a {Math.round(SEPARATED_P * 100)}% chance it beats the
+            runner-up shown next to it, and tied otherwise. A tied choice can be switched, and every
+            choice after it is walked again. When the exact line runs out of games, the next upgrade
+            comes from all games at the same upgrades, unlocks and points spent, and if nothing has
+            enough games the most-played legal one is taken. Both are marked low confidence, as is any
+            choice under {LOW_CONFIDENCE_GAMES.toLocaleString()} games. The list lays both decisions
+            on the level schedule: each unlock is used when it arrives, and each upgrade is bought as
+            soon as its points are there. &quot;Saved&quot; marks an upgrade that points were held for.
+            {" "}{dataWindow.label}. The next patch stays on the last 30 days until the median hero
+            has {dataWindow.enough.toLocaleString()} games in it. This is not part of the comp odds,
+            and it is not split by rank.
           </p>
         </div>
         <div className="flex items-end gap-3">
@@ -143,6 +151,10 @@ export function AbilityPathSection() {
       <p className="mt-3 text-sm tabular-nums text-muted">
         {pct(overall.p)} ({pct(overall.low)}–{pct(overall.high)}) · {compact(hero.matches)} games ·{" "}
         {abilityOrders.fetchedAt.slice(0, 10)}
+      </p>
+      <p className="mt-2 text-sm text-fg">
+        Unlock order: {path.unlockOrder.map((id) => names.get(id) ?? "Unknown").join(" → ")} ·{" "}
+        {ultOptionLabel(path.ult)}
       </p>
       <ol ref={listRef} className="mt-4 grid gap-2 sm:grid-cols-2">
         {path.clicks.map((click, index) => {
@@ -187,6 +199,14 @@ export function AbilityPathSection() {
             >
               <span className="text-muted tabular-nums">{index + 1}</span>
               <span className="min-w-0 flex-1 truncate text-fg">{abilityName}</span>
+              {path.steps[index]?.saved && (
+                <span className="text-xs text-muted" title="Points were held across a level for this upgrade.">
+                  saved
+                </span>
+              )}
+              <span className="text-xs tabular-nums text-muted" title="Earliest boon level for this click.">
+                L{path.steps[index]?.level ?? "?"}
+              </span>
               <span className="tabular-nums text-amber" title={rankTitle(click.rank)}>
                 {rankLabel(click.rank)}
               </span>
@@ -216,16 +236,18 @@ export function AbilityPathSection() {
           return (
             <div key={decision.id} className="text-sm">
               <p className="font-medium text-fg">
-                {decision.label}
+                {decision.kind === "spend"
+                  ? `Upgrade ${decision.index - 1}: ${decision.label}`
+                  : `${decision.label}: ${decision.chosen.name}`}
                 <span className="ml-2 font-normal text-amber" title={decision.separated ? "At least a 95% chance this line is better." : "Under a 95% chance, so the lines are tied."}>
                   {decision.separated ? "separated" : "tied"}
                 </span>
                 {decision.lowConfidence && (
                   <span className="ml-2 font-normal text-muted" title={
                       decision.source === "fallback"
-                        ? "Nothing had enough games, so the most-played legal click was taken."
+                        ? "Nothing had enough games, so the most-played legal choice was taken."
                         : decision.source === "state"
-                          ? "From all games at the same ability ranks, not this exact sequence."
+                          ? "From all games at the same upgrades, unlocks and points spent, not this exact line."
                           : `Under ${LOW_CONFIDENCE_GAMES.toLocaleString()} games.`
                     }>
                     low confidence
