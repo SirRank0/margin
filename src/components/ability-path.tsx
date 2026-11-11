@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { abilityOrders } from "@/data/ability-orders";
 import { dataWindow } from "@/data/data-window";
 import {
+  ALL_RANKS,
   applySwitch,
   buildPath,
   LOW_CONFIDENCE_GAMES,
@@ -12,6 +13,7 @@ import {
   STRATEGY_DECISION,
   TOTAL_POINTS,
   ultOptionLabel,
+  type BandTree,
   type Click,
 } from "@/lib/ability-path";
 import { compareHeroNames } from "@/lib/hero-order";
@@ -43,12 +45,26 @@ function rankTitle(rank: Click["rank"]) {
   return "5 ability points. This ability has now had 8 points spent on it.";
 }
 
+const BANDS = abilityOrders.bands ?? [{ band: ALL_RANKS, label: "All ranks" }];
+
+/** Rank bands other than all ranks live in public/ability-orders/<band>/<heroId>.json. */
+type Loaded = BandTree | "missing";
+
 export function AbilityPathSection() {
   const heroes = [...abilityOrders.heroes].sort((a, b) => compareHeroNames(a.name, b.name));
   const [heroId, setHeroId] = useState(heroes.find((hero) => hero.id === 84)?.id ?? heroes[0]?.id ?? 0);
+  const [bandId, setBandId] = useState(ALL_RANKS);
+  const [loaded, setLoaded] = useState<Record<string, Loaded>>({});
   const [branches, setBranches] = useState<Record<string, number>>({});
-  const hero = heroes.find((row) => row.id === heroId) ?? heroes[0];
-  const path = useMemo(() => (hero ? buildPath(hero, branches) : null), [hero, branches]);
+  const baseHero = heroes.find((row) => row.id === heroId) ?? heroes[0];
+  const bandKey = `${bandId}/${baseHero?.id ?? 0}`;
+  const bandTree = bandId === ALL_RANKS ? null : loaded[bandKey];
+  const hero = useMemo(
+    () => (baseHero && bandTree && bandTree !== "missing" ? { ...baseHero, bands: [...baseHero.bands, bandTree] } : baseHero),
+    [baseHero, bandTree],
+  );
+  const shownBand = bandTree && bandTree !== "missing" ? bandId : ALL_RANKS;
+  const path = useMemo(() => (hero ? buildPath(hero, branches, shownBand) : null), [hero, branches, shownBand]);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [pinKey, setPinKey] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -57,6 +73,25 @@ export function AbilityPathSection() {
   const listRef = useRef<HTMLOListElement>(null);
   const hideTimer = useRef(0);
 
+  useEffect(() => {
+    if (bandId === ALL_RANKS || !baseHero || loaded[bandKey] !== undefined) return;
+    let live = true;
+    const url = `${import.meta.env.BASE_URL}ability-orders/${bandId}/${baseHero.id}.json`;
+    async function load(): Promise<Loaded> {
+      try {
+        const response = await fetch(url);
+        return response.ok ? ((await response.json()) as BandTree) : "missing";
+      } catch {
+        return "missing";
+      }
+    }
+    void load().then((tree) => {
+      if (live) setLoaded((current) => ({ ...current, [bandKey]: tree }));
+    });
+    return () => {
+      live = false;
+    };
+  }, [bandId, baseHero, bandKey, loaded]);
   useEffect(() => {
     const query = window.matchMedia("(max-width: 639px)");
     const apply = () => setCoarse(query.matches);
@@ -132,12 +167,28 @@ export function AbilityPathSection() {
             level schedule: each unlock is used when it arrives, each upgrade is bought as soon as
             its points are there. Strategy win rates come from games long enough to max two
             abilities (level 19 or later). {dataWindow.label}. The next patch stays on the last 30
-            days until the median hero has {dataWindow.enough.toLocaleString()} games in it. This is
-            not part of the comp odds, and it is not split by rank.
+            days until the median hero has {dataWindow.enough.toLocaleString()} games in it. A rank
+            band keeps matches whose average badge is in it; where a band has too few games for a
+            pick, all ranks are used and the pick is marked low confidence. This is not part of the
+            comp odds.
           </p>
         </div>
         <div className="flex items-end gap-3">
           <HeroPortrait id={hero.id} name={hero.name} size="card" />
+          <label className="flex flex-col gap-1 text-sm text-muted">
+            Rank
+            <select
+              value={bandId}
+              onChange={(event) => { setBandId(event.target.value); setBranches({}); }}
+              className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
+            >
+              {BANDS.map((row) => (
+                <option key={row.band} value={row.band}>
+                  {row.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="flex flex-col gap-1 text-sm text-muted">
           Hero
           <select
@@ -158,6 +209,15 @@ export function AbilityPathSection() {
         {pct(overall.p)} ({pct(overall.low)}–{pct(overall.high)}) · {compact(hero.matches)} games ·{" "}
         {abilityOrders.fetchedAt.slice(0, 10)}
       </p>
+      {bandId !== ALL_RANKS && (
+        <p className="mt-1 text-sm text-muted">
+          {!bandTree
+            ? "Loading this rank band. Showing all ranks until it arrives."
+            : bandTree === "missing"
+              ? "No data for this rank band. Showing all ranks."
+              : `${BANDS.find((row) => row.band === bandId)?.label ?? bandId}: ${compact(bandTree.matches ?? 0)} games. Picks this band has too few games for use all ranks and are marked low confidence.`}
+        </p>
+      )}
       <p className="mt-2 text-sm text-fg">
         Unlock order: {path.unlockOrder.map((id) => names.get(id) ?? "Unknown").join(" → ")} ·{" "}
         {ultOptionLabel(path.ult)}
@@ -295,6 +355,8 @@ export function AbilityPathSection() {
                         ? "Nothing had enough games, so the most-played legal choice was taken."
                         : decision.source === "state"
                           ? "From all games at the same upgrades, unlocks and points spent, not this exact line."
+                          : decision.source === "pooled"
+                            ? "Too few games in this rank band, so all ranks were used."
                           : `Under ${LOW_CONFIDENCE_GAMES.toLocaleString()} games.`
                     }>
                     low confidence
