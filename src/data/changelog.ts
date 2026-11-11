@@ -15,6 +15,7 @@ export const changelog: ChangelogEntry[] = [
   {
     date: "2026-11-11",
     text: "Assigning a street can change the chance again, using games at the rank you picked, instead of always adding nothing.",
+    link: "https://github.com/SirRank0/margin/pull/15",
   },
   {
     date: "2026-11-11",
