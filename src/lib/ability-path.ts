@@ -34,6 +34,12 @@ export type HeroOrders = {
   openUpgrade: NamedCount[];
   /** First three clicks. Unlocks and the 1-point upgrade are not distinguished here. */
   prefix3: PrefixCount[];
+  /** First four clicks, so the fourth click is measured rather than inferred. */
+  prefix4?: PrefixCount[];
+  /** Max order counted only in games that opened with `opening`. */
+  maxByOpening?: Array<{ opening: number[]; steps: MaxStep[] }>;
+  /** T2 ranks before each 5, counted only in games that opened with `opening`. */
+  t2ByOpening?: Array<{ opening: number[]; steps: T2Step[] }>;
   beforeFive: BeforeFive[];
   /** This ability's 5-point upgrade came before the ultimate's 2-point upgrade. */
   fiveBeforeUlt: NamedCount[];
@@ -247,6 +253,40 @@ function orderByEvidence(rows: NamedCount[]): number[] {
   return order;
 }
 
+
+type ClickStep = { click: number; row: Count; separated: boolean; other: (Count & { ability: number }) | null };
+
+/** Best next click at each position, given the clicks already chosen. */
+function walkClicks(rows: PrefixCount[], length: number): { clicks: number[]; steps: ClickStep[] } | null {
+  let pool = rows.filter((row) => row.clicks.length >= length);
+  if (pool.length === 0) return null;
+  const clicks: number[] = [];
+  const steps: ClickStep[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const grouped = new Map<number, Count>();
+    for (const row of pool) {
+      const click = row.clicks[index];
+      if (click === undefined) continue;
+      const prev = grouped.get(click) ?? { wins: 0, matches: 0 };
+      grouped.set(click, { wins: prev.wins + row.wins, matches: prev.matches + row.matches });
+    }
+    const pick = choose([...grouped].map(([ability, count]) => ({ ability, ...count })));
+    if (!pick) break;
+    const other = [...grouped]
+      .filter(([ability, count]) => ability !== pick.row.ability && count.matches >= MIN_BRANCH)
+      .sort((a, b) => b[1].matches - a[1].matches)[0];
+    clicks.push(pick.row.ability);
+    steps.push({
+      click: pick.row.ability,
+      row: pick.row,
+      separated: pick.separated,
+      other: other ? { ability: other[0], ...other[1] } : null,
+    });
+    pool = pool.filter((row) => row.clicks[index] === pick.row.ability);
+  }
+  return clicks.length > 0 ? { clicks, steps } : null;
+}
+
 export function buildPath(hero: HeroOrders): AbilityPath {
   const names = byId(hero);
   const nameOf = (id: number) => names.get(id)?.name ?? String(id);
@@ -254,82 +294,49 @@ export function buildPath(hero: HeroOrders): AbilityPath {
   const ult = hero.abilities.find((ability) => ability.slot === 4);
   const decisions: Decision[] = [];
 
-  let rush: number | null = null;
-  if (hero.earlyPoints) {
-    const openings: Opening[] = [
-      { ...hero.earlyPoints.spread, ability: null },
-      ...hero.earlyPoints.rush.map((row) => ({ ...row })),
-    ];
-    const opening = undominated(openings);
-    if (opening) {
-      rush = opening.row.ability;
-      const other = openings
-        .filter((row) => row.ability !== rush && row.matches >= MIN_BRANCH)
-        .sort((a, b) => b.matches - a.matches)[0];
-      decisions.push(
-        decision(
-          "First four points",
-          opening.row,
-          rush === null ? "Three 1-point ranks" : `${nameOf(rush)} to its 2-point rank`,
-          other ?? null,
-          other ? (other.ability === null ? "Three 1-point ranks" : `${nameOf(other.ability)} to its 2-point rank`) : null,
-          opening.separated,
-        ),
-      );
-    }
-  }
-
-  const openerPick = rush === null ? choose(hero.openUpgrade) : null;
-  const opener = rush ?? openerPick?.row.ability ?? basics[0]?.id;
-  if (openerPick && opener !== undefined) {
-    const other = hero.openUpgrade
-      .filter((row) => row.ability !== opener && row.matches >= MIN_BRANCH)
-      .sort((a, b) => b.matches - a.matches)[0];
+  // Walk the first three clicks. Unlock order comes from first appearance;
+  // upgrade order comes from which ability is clicked again. earlyPoints.rush
+  // collapses both, so a path that unlocks A then rushes B was read as "open B".
+  const early = walkClicks(hero.prefix3, 3);
+  // Fourth click, measured in games that opened the way we chose.
+  const fourthPool = early && hero.prefix4
+    ? hero.prefix4.filter((row) => row.clicks.slice(0, 3).every((id, i) => id === early.clicks[i]))
+    : [];
+  const fourth = fourthPool.length > 0 ? walkClicks(fourthPool, 4) : null;
+  const walkedClicks = fourth?.clicks ?? early?.clicks ?? [];
+  const walkedSteps = [...(early?.steps ?? []), ...(fourth?.steps.slice(3) ?? [])];
+  const unlockSeen: number[] = [];
+  for (const step of walkedSteps) {
+    const first = !unlockSeen.includes(step.click);
+    if (first) unlockSeen.push(step.click);
+    const other = step.other;
     decisions.push(
       decision(
-        "Open, then the 1-point upgrade",
-        openerPick.row,
-        nameOf(opener),
-        other ?? null,
+        first ? `Unlock ${nameOf(step.click)}` : `Upgrade ${nameOf(step.click)}`,
+        step.row,
+        nameOf(step.click),
+        other,
         other ? nameOf(other.ability) : null,
-        openerPick.separated,
+        step.separated,
       ),
     );
   }
 
-  const secondRows = new Map<number, Count>();
-  if (opener !== undefined) {
-    for (const row of hero.prefix3) {
-      if (row.clicks[0] !== opener || row.clicks[1] !== opener) continue;
-      const next = row.clicks[2];
-      if (next === undefined || next === opener || next === ult?.id) continue;
-      const prev = secondRows.get(next) ?? { wins: 0, matches: 0 };
-      secondRows.set(next, { wins: prev.wins + row.wins, matches: prev.matches + row.matches });
-    }
-  }
-  const secondPick = choose([...secondRows].map(([ability, count]) => ({ ability, ...count })));
-  const second = secondPick?.row.ability ?? basics.find((ability) => ability.id !== opener)?.id;
-  if (secondPick && second !== undefined) {
-    const other = [...secondRows]
-      .filter(([ability, count]) => ability !== second && count.matches >= MIN_BRANCH)
-      .sort((a, b) => b[1].matches - a[1].matches)[0];
-    decisions.push(
-      decision(
-        "Second ability",
-        secondPick.row,
-        nameOf(second),
-        other ? other[1] : null,
-        other ? nameOf(other[0]) : null,
-        secondPick.separated,
-      ),
-    );
-  }
-  const third = basics.find((ability) => ability.id !== opener && ability.id !== second)?.id;
+  const opener = unlockSeen[0] ?? choose(hero.openUpgrade)?.row.ability ?? basics[0]?.id;
+  const second = unlockSeen[1] ?? basics.find((ability) => ability.id !== opener)?.id;
+  const third = unlockSeen[2] ?? basics.find((ability) => ability.id !== opener && ability.id !== second)?.id;
+  const opening = early?.clicks ?? [];
+  const sameOpening = (row: { opening: number[] }) =>
+    row.opening.length === opening.length && row.opening.every((id, i) => id === opening[i]);
+  const conditionedMax = hero.maxByOpening?.find(sameOpening)?.steps;
+  const conditionedT2 = hero.t2ByOpening?.find(sameOpening)?.steps;
+  const maxSource = conditionedMax && conditionedMax.length > 0 ? conditionedMax : hero.maxSteps;
+  const t2Source = conditionedT2 && conditionedT2.length > 0 ? conditionedT2 : hero.t2BeforeStep;
 
-  const looked = hero.maxSteps && hero.continuation?.length
-    ? lookAheadWalk(hero.maxSteps, hero.continuation)
+  const looked = maxSource && hero.continuation?.length && !conditionedMax
+    ? lookAheadWalk(maxSource, hero.continuation)
     : null;
-  const walked = looked ?? (hero.maxSteps ? walkMaxSteps(hero.maxSteps) : null);
+  const walked = looked ?? (maxSource ? walkMaxSteps(maxSource) : null);
   const maxOrder = walked?.order ?? orderByEvidence(hero.firstMax);
   const maxPick = walked ? null : choose(hero.firstMax);
   const firstMaxId = maxOrder[0] ?? maxPick?.row.ability;
@@ -373,7 +380,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
   };
   function packageFor(prefix: number[], five: number | undefined) {
     if (five === undefined) return null;
-    const fromSteps = (hero.t2BeforeStep ?? []).filter(
+    const fromSteps = (t2Source ?? []).filter(
       (row) => row.five === five && samePrefix(row.prefix, prefix),
     );
     const rows = fromSteps.length > 0
@@ -394,7 +401,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     const later = packageFor(maxOrder.slice(0, index + 1), maxOrder[index + 1]);
     if (pick && later && !pick.separated) {
       const wanted = new Set(later.row.t2s);
-      const tied = (hero.t2BeforeStep ?? []).filter(
+      const tied = (t2Source ?? []).filter(
         (row) => row.five === five && samePrefix(row.prefix, maxOrder.slice(0, index)) && overlaps(interval(row), interval(pick.row)),
       );
       const covering = tied
@@ -409,7 +416,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
   const packagePick = stepPackages[0] ?? null;
   if (packagePick && firstMaxId !== undefined) {
     const picked = fiveKey(packagePick.row);
-    const packageRows = (hero.t2BeforeStep ?? []).filter(
+    const packageRows = (t2Source ?? []).filter(
       (row) => row.five === firstMaxId && samePrefix(row.prefix, []),
     );
     const rows = packageRows.length > 0 ? packageRows : hero.beforeFive.filter((row) => row.five === firstMaxId);
@@ -434,7 +441,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     const pick = stepPackages[index];
     const five = maxOrder[index];
     if (!pick || five === undefined) continue;
-    const rows = (hero.t2BeforeStep ?? []).filter(
+    const rows = (t2Source ?? []).filter(
       (row) => row.five === five && samePrefix(row.prefix, maxOrder.slice(0, index)),
     );
     const other = rows
@@ -485,13 +492,20 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     }
   }
 
-  if (rush !== null) {
-    enqueue(rush, 1);
-    enqueue(second, 1);
-    enqueue(rush, 2);
-    if (!firstFiveIsUlt) enqueue(third, 1);
-  } else {
-    for (const id of [opener, second, third]) enqueue(id, 1);
+  // Early upgrades from the click walk. An ability clicked twice in the first
+  // three is at its 1-point rank; one that ends the walk repeated is being
+  // rushed, so continue it to its 2-point rank. Remaining basics get their
+  // 1-point rank before any 5.
+  if (walkedClicks.length > 0) {
+    const counts = new Map<number, number>();
+    for (const id of walkedClicks) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const [id, count] of counts) {
+      if (count >= 2) enqueue(id, 1);
+      if (count >= 3) enqueue(id, 2);
+    }
+  }
+  for (const id of [opener, second, third]) {
+    if (walkedClicks.filter((click) => click === id).length < 2) enqueue(id, 1);
   }
   for (let index = 0; index < maxOrder.length; index += 1) {
     const id = maxOrder[index];

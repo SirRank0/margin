@@ -76,6 +76,9 @@ def hero_orders(hero, names, window):
 
     open_upgrade = defaultdict(lambda: [0, 0])
     prefix3 = defaultdict(lambda: [0, 0])
+    prefix4 = defaultdict(lambda: [0, 0])
+    max_by_opening = defaultdict(lambda: [0, 0])
+    t2_by_opening = defaultdict(lambda: [0, 0])
     before = defaultdict(lambda: [0, 0])
     five_before_ult = defaultdict(lambda: [0, 0])
     first_max = defaultdict(lambda: [0, 0])
@@ -98,6 +101,9 @@ def hero_orders(hero, names, window):
             add(open_upgrade, seq[0], w, n)
         if len(seq) >= 3:
             add(prefix3, (seq[0], seq[1], seq[2]), w, n)
+        if len(seq) >= 4:
+            add(prefix4, (seq[0], seq[1], seq[2], seq[3]), w, n)
+        opening = tuple(seq[:3]) if len(seq) >= 3 else None
         counts = {}
         order = []
         for ability in seq:
@@ -106,6 +112,8 @@ def hero_orders(hero, names, window):
                 if not order:
                     add(first_max, ability, w, n)
                 add(max_steps, (tuple(order), ability), w, n)
+                if opening is not None:
+                    add(max_by_opening, (opening, tuple(order), ability), w, n)
                 order.append(ability)
         ev = events(seq)
         basic_t2 = [event for event in ev if event[0] != ult and event[1] == 3]
@@ -123,6 +131,8 @@ def hero_orders(hero, names, window):
                 if other[0] != event[0] and other[2] < event[2]
             ))
             add(t2_before_step, (prior, event[0], done), w, n)
+            if opening is not None:
+                add(t2_by_opening, (opening, prior, event[0], done), w, n)
             maxed.append(event[0])
         for index, event in enumerate(fives[:-1]):
             nxt = fives[index + 1]
@@ -165,6 +175,33 @@ def hero_orders(hero, names, window):
         if n >= KEEP
     ]
     prefixes.sort(key=lambda row: row["matches"], reverse=True)
+    prefixes4 = [
+        {"clicks": list(key), "wins": w, "matches": n}
+        for key, (w, n) in prefix4.items()
+        if n >= KEEP
+    ]
+    prefixes4.sort(key=lambda row: row["matches"], reverse=True)
+    by_opening = []
+    openings = {}
+    for (opening, prior, ability), (w, n) in max_by_opening.items():
+        if n < KEEP:
+            continue
+        bucket = openings.setdefault(opening, [])
+        bucket.append({"prefix": list(prior), "ability": ability, "wins": w, "matches": n})
+    for opening, steps in openings.items():
+        steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
+        by_opening.append({"opening": list(opening), "steps": steps})
+    by_opening.sort(key=lambda row: -sum(step["matches"] for step in row["steps"] if not row["steps"] or step["prefix"] == []))
+    t2_openings = {}
+    for (opening, prior, five, done), (w, n) in t2_by_opening.items():
+        if n < KEEP:
+            continue
+        bucket = t2_openings.setdefault(opening, [])
+        bucket.append({"prefix": list(prior), "five": five, "t2s": list(done), "wins": w, "matches": n})
+    t2_by = []
+    for opening, steps in t2_openings.items():
+        steps.sort(key=lambda row: (len(row["prefix"]), -row["matches"]))
+        t2_by.append({"opening": list(opening), "steps": steps})
     fives = [
         {"t2s": list(key[0]), "five": key[1], "wins": w, "matches": n}
         for key, (w, n) in before.items()
@@ -197,6 +234,9 @@ def hero_orders(hero, names, window):
         "abilities": abilities,
         "openUpgrade": named(open_upgrade),
         "prefix3": prefixes,
+        "prefix4": prefixes4,
+        "maxByOpening": by_opening,
+        "t2ByOpening": t2_by,
         "beforeFive": fives,
         "fiveBeforeUlt": named(five_before_ult),
         "firstMax": named(first_max),
