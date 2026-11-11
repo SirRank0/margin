@@ -59,7 +59,8 @@ export type Decision = {
   separated: boolean;
   pBetter: number;
   lowConfidence: boolean;
-  source: "tree" | "state" | "forced";
+  /** "fallback": nothing cleared the game floors, so the most-played legal option was taken. */
+  source: "tree" | "state" | "forced" | "fallback";
   chosen: Count & { name: string; rate: number };
   other: (Count & { name: string; rate: number }) | null;
   alternateId: number | null;
@@ -94,25 +95,30 @@ function posterior(child: Count, parentRate: number, k = PRIOR_K) {
   return { mean, variance };
 }
 
-type Option = Count & { ability: number; score: number; source: "tree" | "state" };
+/** A choice under this many games is flagged low confidence. */
+export const LOW_CONFIDENCE_GAMES = 1000;
+/** Clicks in a full path: 4 unlocks and 12 upgrades (3 per ability). */
+export const PATH_LENGTH = 16;
+/** Appearances per ability: unlock, 1-point, 2-point, 5-point. */
+const MAX_APPEARANCES = 4;
+
+type Source = "tree" | "state";
+type Row = Count & { ability: number };
+type Option = Row & { score: number; source: Source };
 type Pick = {
   chosen: Option;
   rival: Option | null;
   separated: boolean;
   pBetter: number;
   lowConfidence: boolean;
-  source: "tree" | "state" | "forced";
+  source: Decision["source"];
 };
 
-function pickChild(
-  options: Array<Count & { ability: number }>,
-  parentRate: number,
-  source: "tree" | "state",
-): Pick | null {
+function pickChild(options: Row[], parentRate: number, source: Source): Pick | null {
   const top = Math.max(0, ...options.map((option) => option.matches));
   const eligible = options.filter((option) => option.matches >= MIN_BRANCH && option.matches >= MIN_SHARE * top);
   if (eligible.length === 0) return null;
-  const scored = eligible
+  const scored: Option[] = eligible
     .map((option) => ({ ...option, score: shrink(option, parentRate), source }))
     .sort((a, b) => b.score - a.score || b.matches - a.matches || a.ability - b.ability);
   const chosen = scored[0];
@@ -130,13 +136,69 @@ function pickChild(
     rival,
     pBetter,
     separated: rival ? pBetter >= SEPARATED_P : true,
-    lowConfidence: source === "state" || chosen.matches < 1000,
+    lowConfidence: source === "state" || chosen.matches < LOW_CONFIDENCE_GAMES,
     source,
   };
 }
 
+/** Most-played legal option when nothing clears the game floors. Always low confidence. */
+function fallbackPick(options: Row[], parentRate: number, source: Source): Pick | null {
+  const chosen = options
+    .slice()
+    .sort((a, b) => b.matches - a.matches || a.ability - b.ability)[0];
+  if (!chosen) return null;
+  return {
+    chosen: { ...chosen, score: shrink(chosen, parentRate), source },
+    rival: null,
+    pBetter: 1,
+    separated: true,
+    lowConfidence: true,
+    source: "fallback",
+  };
+}
+
+/**
+ * Whether `id` may be clicked next, given the appearances so far.
+ * At most four appearances per ability, and the ultimate unlocks only after
+ * all three basics are unlocked.
+ */
+export function isLegalClick(id: number, ranks: ReadonlyMap<number, number>, abilities: AbilityInfo[]): boolean {
+  const ability = abilities.find((entry) => entry.id === id);
+  if (!ability) return false;
+  const have = ranks.get(id) ?? 0;
+  if (have >= MAX_APPEARANCES) return false;
+  if (ability.slot === 4 && have === 0) {
+    return abilities.filter((entry) => entry.slot !== 4).every((entry) => (ranks.get(entry.id) ?? 0) > 0);
+  }
+  return true;
+}
+
+/**
+ * Set or clear the switch at `index`. Every later switch is dropped, because
+ * the clicks after a switch are re-walked.
+ */
+export function applySwitch(
+  overrides: Record<string, number>,
+  index: number,
+  ability: number | null,
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    const at = Number(key.replace("click-", ""));
+    if (Number.isInteger(at) && at < index) next[key] = value;
+  }
+  if (ability !== null) next[`click-${index}`] = ability;
+  return next;
+}
+
 function byId(hero: HeroOrders) {
   return new Map(hero.abilities.map((ability) => [ability.id, ability]));
+}
+
+function toRows(rows: ReadonlyArray<readonly [number, number, number, ...unknown[]]>, legal: (id: number) => boolean): Row[] {
+  return rows
+    .filter((row) => legal(row[0]))
+    .map(([ability, wins, matches]) => ({ ability, wins, matches }));
 }
 
 export function buildPath(
@@ -150,39 +212,46 @@ export function buildPath(
   const nameOf = (id: number) => names.get(id)?.name ?? String(id);
   const slots = hero.abilities.slice().sort((a, b) => a.slot - b.slot);
   const slotIds = slots.map((ability) => ability.id);
-  const ult = slots.find((ability) => ability.slot === 4)?.id;
   const ranks = new Map<number, number>();
+  const legal = (id: number) => isLegalClick(id, ranks, hero.abilities);
   let node: TreeNode | null = tree.root;
   let parentRate = hero.matches > 0 ? hero.wins / hero.matches : 0.5;
   const clicks: Click[] = [];
   const decisions: Decision[] = [];
+  const length = Math.min(PATH_LENGTH, slots.length * MAX_APPEARANCES);
 
-  for (let index = 0; index < 16; index += 1) {
-    const legal = (id: number) => (ranks.get(id) ?? 0) < 4;
-    const treeOpts = (node?.[3] ?? [])
-      .filter((child) => legal(child[0]))
-      .map(([ability, wins, matches]) => ({ ability, wins, matches }));
+  for (let index = 0; index < length; index += 1) {
+    const treeOpts: Row[] = toRows(node ? node[3] : [], legal);
     const stateKey = slotIds.map((id) => ranks.get(id) ?? 0).join(",");
-    const stateOpts = (tree.states[stateKey] ?? [])
-      .filter((row) => legal(row[0]))
-      .map(([ability, wins, matches]) => ({ ability, wins, matches }));
+    const stateOpts: Row[] = toRows(tree.states[stateKey] ?? [], legal);
 
-    let pick = pickChild(treeOpts, parentRate, "tree") ?? pickChild(stateOpts, parentRate, "state");
+    let pick: Pick | null =
+      pickChild(treeOpts, parentRate, "tree") ??
+      pickChild(stateOpts, parentRate, "state") ??
+      fallbackPick(treeOpts, parentRate, "tree") ??
+      fallbackPick(stateOpts, parentRate, "state") ??
+      // No data at all: the first legal ability in slot order.
+      fallbackPick(
+        slotIds.filter(legal).slice(0, 1).map((ability) => ({ ability, wins: 0, matches: 0 })),
+        parentRate,
+        "state",
+      );
     const forced = overrides[`click-${index}`];
-    if (forced !== undefined && legal(forced)) {
+    if (forced !== undefined && forced !== pick?.chosen.ability && legal(forced)) {
       const fromTree = treeOpts.find((option) => option.ability === forced);
       const fromState = stateOpts.find((option) => option.ability === forced);
-      const row = fromTree ?? fromState ?? { ability: forced, wins: 0, matches: 0 };
+      const row: Row = fromTree ?? fromState ?? { ability: forced, wins: 0, matches: 0 };
+      const greedy: Option | null = pick?.chosen ?? null;
       pick = {
         chosen: { ...row, score: shrink(row, parentRate), source: fromTree ? "tree" : "state" },
-        rival: pick?.chosen ?? null,
+        rival: greedy,
         pBetter: 0.5,
         separated: false,
-        lowConfidence: row.matches < 1000,
+        lowConfidence: row.matches < LOW_CONFIDENCE_GAMES,
         source: "forced",
       };
     }
-    if (!pick) break;
+    if (!pick) break; // only when no ability is legal, so the path is complete
 
     const id = pick.chosen.ability;
     const next = (ranks.get(id) ?? 0) + 1;
@@ -208,14 +277,11 @@ export function buildPath(
       alternateId: pick.separated ? null : rival?.ability ?? null,
     });
 
-    const child = pick.source === "forced"
-      ? node?.[3].find((entry) => entry[0] === id) ?? null
-      : node?.[3].find((entry) => entry[0] === id) ?? null;
+    // Stay in the tree while the chosen click exists there; otherwise later
+    // steps come from the state table.
+    const child: TreeNode | null = node ? node[3].find((entry) => entry[0] === id) ?? null : null;
     parentRate = pick.chosen.score;
-    node = pick.source === "tree" || child ? child : null;
-    if (ult !== undefined && id === ult && next === 1) {
-      // ult unlock is just a click; nothing special
-    }
+    node = child;
   }
 
   return { clicks, decisions, band: tree.band };
