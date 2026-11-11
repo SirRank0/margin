@@ -34,27 +34,22 @@ function rankTitle(rank: Click["rank"]) {
 export function AbilityPathSection() {
   const heroes = [...abilityOrders.heroes].sort((a, b) => compareHeroNames(a.name, b.name));
   const [heroId, setHeroId] = useState(heroes.find((hero) => hero.id === 84)?.id ?? heroes[0]?.id ?? 0);
+  function pickHero(id: number) {
+    setHeroId(id);
+    setBranches({});
+  }
+  const [branches, setBranches] = useState<Record<string, number>>({});
   const hero = heroes.find((row) => row.id === heroId) ?? heroes[0];
-  const path = useMemo(() => (hero ? buildPath(hero) : null), [hero]);
+  const path = useMemo(() => (hero ? buildPath(hero, branches) : null), [hero, branches]);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [pinKey, setPinKey] = useState<string | null>(null);
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const [coarse, setCoarse] = useState(false);
   const rows = useRef(new Map<string, HTMLLIElement>());
   const listRef = useRef<HTMLOListElement>(null);
   const hideTimer = useRef(0);
-
-  useEffect(() => {
-    const query = window.matchMedia("(max-width: 639px)");
-    const apply = () => setCoarse(query.matches);
-    apply();
-    query.addEventListener("change", apply);
-    return () => query.removeEventListener("change", apply);
-  }, []);
   if (!hero || !path) return null;
   const names = new Map(hero.abilities.map((ability) => [ability.id, ability.name]));
   const overall = wilson(hero.wins, hero.matches);
-  const activeKey = coarse ? (openKey ?? pinKey) : (hoverKey ?? pinKey);
+  const activeKey = hoverKey ?? pinKey;
   const activeIndex = path.clicks.findIndex((click, index) => `${click.ability}-${click.rank}-${index}` === activeKey);
   const active = activeIndex >= 0 ? path.clicks[activeIndex] : null;
   const activeName = active ? names.get(active.ability) : undefined;
@@ -73,20 +68,19 @@ export function AbilityPathSection() {
   }
 
   useEffect(() => {
-    if (!pinKey && !openKey) return;
+    if (!pinKey) return;
+    const pinned = pinKey;
     function onDocClick(event: MouseEvent) {
       const target = event.target as Node | null;
       if (!target) return;
+      const row = rows.current.get(pinned);
       const tip = document.querySelector('[role="tooltip"]');
-      if (tip?.contains(target)) return;
-      // A tap on a row is handled by that row. Anything else dismisses.
-      if (listRef.current?.contains(target)) return;
+      if (row?.contains(target) || tip?.contains(target)) return;
       setPinKey(null);
-      setOpenKey(null);
     }
     document.addEventListener("click", onDocClick);
     return () => document.removeEventListener("click", onDocClick);
-  }, [pinKey, openKey]);
+  }, [pinKey]);
 
   return (
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
@@ -115,7 +109,7 @@ export function AbilityPathSection() {
           Hero
           <select
             value={hero.id}
-            onChange={(event) => setHeroId(Number(event.target.value))}
+            onChange={(event) => pickHero(Number(event.target.value))}
             className="min-h-11 rounded-card border border-line bg-bg px-3 text-sm text-fg"
           >
             {heroes.map((row) => (
@@ -143,33 +137,14 @@ export function AbilityPathSection() {
                 else rows.current.delete(key);
               }}
               tabIndex={0}
-              onMouseEnter={() => {
-                if (!coarse) show(key);
-              }}
-              onMouseLeave={() => {
-                if (!coarse) hideSoon();
-              }}
-              onFocus={() => {
-                if (!coarse) show(key);
-              }}
-              onBlur={() => {
-                if (!coarse) hideSoon();
-              }}
-              onClick={() => {
-                if (coarse) {
-                  setOpenKey((current) => (current === key ? null : key));
-                  if (pinKey && pinKey !== key) setPinKey(null);
-                  return;
-                }
-                setPinKey((current) => (current === key ? null : key));
-              }}
-              title={coarse ? "Tap to open this ability card" : "Click to pin this ability card"}
+              onMouseEnter={() => show(key)}
+              onMouseLeave={hideSoon}
+              onFocus={() => show(key)}
+              onBlur={hideSoon}
+              onClick={() => setPinKey((current) => (current === key ? null : key))}
+              title="Click to pin this ability card"
               className={`flex min-h-11 cursor-help items-center justify-between gap-3 rounded-card border px-3 text-sm outline-none focus-visible:border-amber ${
-                key === pinKey
-                  ? "border-amber bg-amber/5 ring-1 ring-amber/40"
-                  : key === openKey
-                    ? "border-amber/60 bg-amber/5"
-                    : "border-line bg-raised"
+                key === pinKey ? "border-amber bg-amber/5 ring-1 ring-amber/40" : "border-line bg-raised"
               }`}
             >
               <span className="text-muted tabular-nums">{index + 1}</span>
@@ -190,7 +165,6 @@ export function AbilityPathSection() {
           rank={active.rank}
           pinned={pinKey === activeKey}
           onTogglePin={() => setPinKey((current) => (current === activeKey ? null : activeKey))}
-          onDismiss={coarse ? () => { setOpenKey(null); setPinKey(null); } : undefined}
           onEnter={() => show(activeKey!)}
           onLeave={hideSoon}
         />
@@ -223,6 +197,22 @@ export function AbilityPathSection() {
                   ? `. ${decision.other.name} ${pct(other.p)} (${pct(other.low)}–${pct(other.high)}) · ${compact(decision.other.matches)}`
                   : ""}
               </p>
+              {decision.alternateId !== null && decision.other && (
+                <button
+                  type="button"
+                  className="mt-1 text-amber underline-offset-2 hover:underline"
+                  onClick={() =>
+                    setBranches((current) => {
+                      const next = { ...current };
+                      if (next[decision.id] === decision.alternateId) delete next[decision.id];
+                      else next[decision.id] = decision.alternateId!;
+                      return next;
+                    })
+                  }
+                >
+                  {branches[decision.id] === decision.alternateId ? "Back to the main line" : `Switch to ${decision.other.name}`}
+                </button>
+              )}
             </div>
           );
         })}

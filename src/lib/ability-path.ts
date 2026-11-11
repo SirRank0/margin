@@ -83,12 +83,16 @@ export type Click = {
 };
 
 export type Decision = {
+  /** Stable key, so a branch switch survives a rebuild. */
+  id: string;
   label: string;
-  /** False when the chosen line's interval overlaps the largest alternative. */
+  /** False when the chance this line is better is under 95%. */
   separated: boolean;
   chosen: Count & { name: string };
   /** The largest other line, when there is one. */
   other: (Count & { name: string }) | null;
+  /** Ability the other line would pick, when the decision is tied. */
+  alternateId: number | null;
 };
 
 export type AbilityPath = {
@@ -130,41 +134,67 @@ function overlaps(a: Interval, b: Interval) {
   return a.low <= b.high && b.low <= a.high;
 }
 
+/** Standard normal CDF. Abramowitz and Stegun 26.2.17. */
+function normalCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x >= 0 ? 1 - p : p;
+}
+
 /**
- * Highest Wilson lower bound, if that interval does not overlap the line with
- * the most games. Otherwise the line with the most games, and it is not a win.
+ * Beta-Binomial comparison. Rank by posterior mean, mark separated only when
+ * the chance this line is better than the next is at least 95%.
+ *
+ * Prior is Beta(1, 1). Posterior after w wins in n games is Beta(1+w, 1+n-w).
+ * The mean is the best estimate. The probability of being best is the
+ * confidence, from a normal approximation to the two posteriors.
  */
 export function choose<T extends Count>(rows: T[]): { row: T; separated: boolean } | null {
   const eligible = rows.filter((row) => row.matches >= MIN_BRANCH);
   const pool = eligible.length > 0 ? eligible : rows.filter((row) => row.matches > 0);
   if (pool.length === 0) return null;
-  const scored = pool.map((row) => ({ row, ...interval(row) }));
-  const common = scored.reduce((best, row) => (row.matches > best.matches ? row : best));
-  // A thin line cannot beat the common one. It needs a real share of the games,
-  // not just a lower bound that barely clears on a few hundred matches.
-  const floor = Math.max(MIN_BRANCH, Math.floor(common.matches * 0.05));
-  const contenders = scored.filter((row) => row.matches >= floor);
-  const leader = contenders.reduce((best, row) => {
-    if (row.low !== best.low) return row.low > best.low ? row : best;
-    return row.matches > best.matches ? row : best;
+  const scored = pool.map((row) => {
+    const wins = row.wins;
+    const losses = row.matches - row.wins;
+    const a = 1 + wins;
+    const b = 1 + losses;
+    const mean = a / (a + b);
+    const variance = (a * b) / ((a + b) ** 2 * (a + b + 1));
+    return { row, mean, variance };
   });
-  const chosen = leader === common || !overlaps(leader, common) ? leader : common;
-  const rival = scored
-    .filter((row) => row.row !== chosen.row)
-    .sort((a, b) => b.matches - a.matches)[0];
-  return { row: chosen.row, separated: rival ? !overlaps(chosen, rival) : false };
+  scored.sort((left, right) => right.mean - left.mean || right.row.matches - left.row.matches);
+  const chosen = scored[0];
+  const rival = scored[1];
+  if (!chosen) return null;
+  if (!rival) return { row: chosen.row, separated: false };
+  const gap = chosen.mean - rival.mean;
+  const scale = Math.sqrt(chosen.variance + rival.variance);
+  const pBetter = scale > 0 ? normalCdf(gap / scale) : 0.5;
+  return { row: chosen.row, separated: pBetter >= 0.95 };
 }
 
 function byId(hero: HeroOrders) {
   return new Map(hero.abilities.map((ability) => [ability.id, ability]));
 }
 
-function decision(label: string, chosen: Count, chosenName: string, other: Count | null, otherName: string | null, separated: boolean): Decision {
+function decision(
+  id: string,
+  label: string,
+  chosen: Count,
+  chosenName: string,
+  other: Count | null,
+  otherName: string | null,
+  separated: boolean,
+  alternateId: number | null = null,
+): Decision {
   return {
+    id,
     label,
     separated,
     chosen: { ...chosen, name: chosenName },
     other: other && otherName ? { ...other, name: otherName } : null,
+    alternateId: separated ? null : alternateId,
   };
 }
 
@@ -291,7 +321,7 @@ function walkClicks(rows: PrefixCount[], length: number): { clicks: number[]; st
   return clicks.length > 0 ? { clicks, steps } : null;
 }
 
-export function buildPath(hero: HeroOrders): AbilityPath {
+export function buildPath(hero: HeroOrders, overrides: Record<string, number> = {}): AbilityPath {
   const names = byId(hero);
   const nameOf = (id: number) => names.get(id)?.name ?? String(id);
   const basics = hero.abilities.filter((ability) => ability.slot !== 4).sort((a, b) => a.slot - b.slot);
@@ -316,12 +346,14 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     const other = step.other;
     decisions.push(
       decision(
+        `click-${decisions.length}`,
         first ? `Unlock ${nameOf(step.click)}` : `Upgrade ${nameOf(step.click)}`,
         step.row,
         nameOf(step.click),
         other,
         other ? nameOf(other.ability) : null,
         step.separated,
+        other?.ability ?? null,
       ),
     );
   }
@@ -352,12 +384,14 @@ export function buildPath(hero: HeroOrders): AbilityPath {
       const lookedAhead = "looked" in pick && pick.looked;
       decisions.push(
         decision(
+          `max-${index}`,
           `${MAX_LABELS[index] ?? "Next"} 5-point upgrade${lookedAhead ? ", given the next 5" : ""}`,
           pick.row,
           nameOf(pick.row.ability),
           pick.other,
           pick.other ? nameOf(pick.other.ability) : null,
           pick.separated,
+          pick.other?.ability ?? null,
         ),
       );
     }
@@ -367,12 +401,14 @@ export function buildPath(hero: HeroOrders): AbilityPath {
       .sort((a, b) => b.matches - a.matches)[0];
     decisions.push(
       decision(
+        "max-0",
         "First 5-point upgrade",
         maxPick.row,
         nameOf(firstMaxId),
         other ?? null,
         other ? nameOf(other.ability) : null,
         maxPick.separated,
+        other?.ability ?? null,
       ),
     );
   }
@@ -430,6 +466,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     if (other) {
       decisions.push(
         decision(
+          "t2-0",
           "2-point ranks before that 5",
           packagePick.row,
           labelOf(packagePick.row),
@@ -454,6 +491,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     if (!other) continue;
     decisions.push(
       decision(
+        `t2-${index}`,
         `2-point ranks before the ${MAX_LABELS[index]?.toLowerCase() ?? "next"} 5`,
         pick.row,
         labelOf(pick.row),
@@ -473,6 +511,7 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     const before = ultGate.row.kind === "ult";
     decisions.push(
       decision(
+        "ult-t2",
         "Ultimate's 2-point upgrade",
         before ? hero.ultBeforeFive : hero.fiveBeforeUltAny,
         before ? "Before any 5-point upgrade" : "After a 5-point upgrade",
@@ -481,6 +520,15 @@ export function buildPath(hero: HeroOrders): AbilityPath {
         ultGate.separated,
       ),
     );
+  }
+
+  for (let index = 0; index < maxOrder.length; index += 1) {
+    const pick = overrides[`max-${index}`];
+    if (pick !== undefined && pick !== maxOrder[index]) {
+      const swap = maxOrder.indexOf(pick);
+      if (swap >= 0) maxOrder[swap] = maxOrder[index];
+      maxOrder[index] = pick;
+    }
   }
 
   const queue: Click[] = [];
