@@ -15,11 +15,15 @@ splits each order into:
 
 * the unlock order of the three basics (a slot code such as 213),
 * where the ultimate unlock went (see ult_option),
+* the point-allocation strategy (see strategy_of and docs/ability-mechanics.md),
 * the point-spend order of the 12 upgrades, as a prefix tree under each unlock
-  order. Upgrades bought within WINDOW_S seconds of each other (by the API's
-  average upgrade times) were bought in one go, so their order inside the
-  window is not a choice; they are put in slot order so the tree does not split
-  on it.
+  order and strategy. Upgrades bought within WINDOW_S seconds of each other (by
+  the API's average upgrade times) were bought in one go, so their order inside
+  the window is not a choice; they are put in slot order so the tree does not
+  split on it.
+
+The rules live in src/lib/ability-rules.ts; the constants here mirror it, and
+the split mirrors splitOrder and strategyOf in src/lib/ability-path.ts.
 """
 
 import json
@@ -41,6 +45,13 @@ WINDOW_S = 10
 COST = {1: 1, 2: 2, 3: 5}
 # Points that exist when the ultimate unlock arrives at level 7.
 POINTS_BY_LEVEL_7 = 4
+# Spend trees are kept only where the board can choose them: an unlock order and a
+# strategy that clear MIN_BRANCH games and MIN_SHARE of the most-played option
+# (ability-path.ts). Anything else falls back to the state table on the board.
+MIN_BRANCH = 200
+MIN_SHARE = 0.05
+# Games by how many abilities they maxed, across heroes (printed for the docs).
+MAXES = defaultdict(int)
 
 
 def get(path, params=None):
@@ -115,10 +126,33 @@ def split(abilities, times, slot_ids):
     return code, ult_opt, [entry[0] for entry in canon], before
 
 
+def strategy_of(spends, slot_ids):
+    """(first max slot, second max slot, shape) as first*100 + second*10 + shape.
+
+    shape is how many other abilities had their 2-point upgrade when the first
+    one got its 5-point upgrade: 0 none (rush), 1 one, 2 two or more (spread).
+    None when fewer than two abilities were maxed.
+    """
+    tiers = [0, 0, 0, 0]
+    maxes = []
+    shape = 0
+    for ability in spends:
+        i = slot_ids.index(ability)
+        tiers[i] += 1
+        if tiers[i] == 3:
+            if not maxes:
+                shape = min(2, sum(1 for j, t in enumerate(tiers) if j != i and t >= 2))
+            maxes.append(i + 1)
+            if len(maxes) == 2:
+                return maxes[0] * 100 + maxes[1] * 10 + shape
+    return None
+
+
 def build(rows, slot_ids):
     index_of = {ability: i for i, ability in enumerate(slot_ids)}
     unlocks = defaultdict(lambda: [0, 0])
     ults = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    strategies = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     spend = defaultdict(Node)
     states = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     for row in rows:
@@ -132,7 +166,16 @@ def build(rows, slot_ids):
         if ult_opt is not None:
             ults[code][ult_opt][0] += w
             ults[code][ult_opt][1] += n
-        node = spend[code]
+        tiers_seen = defaultdict(int)
+        for ability in spends:
+            tiers_seen[ability] += 1
+        MAXES[sum(1 for t in tiers_seen.values() if t == 3)] += n
+        strategy = strategy_of(spends, slot_ids)
+        if strategy is None:
+            continue
+        strategies[code][strategy][0] += w
+        strategies[code][strategy][1] += n
+        node = spend[(code, strategy)]
         node.wins += w
         node.matches += n
         tiers = [0, 0, 0, 0]
@@ -152,7 +195,7 @@ def build(rows, slot_ids):
             child.wins += w
             child.matches += n
             node = child
-    return unlocks, ults, spend, states
+    return unlocks, ults, strategies, spend, states
 
 
 def prune(node):
@@ -173,6 +216,11 @@ def rows_of(table):
     return rows
 
 
+def choosable(table):
+    top = max((n for _, n in table.values()), default=0)
+    return {key for key, (_, n) in table.items() if n >= MIN_BRANCH and n >= MIN_SHARE * top}
+
+
 def hero_tree(hero, names, window):
     rows = get(
         "/v1/analytics/ability-order-stats",
@@ -186,14 +234,23 @@ def hero_tree(hero, names, window):
             abilities.append({"id": found[0], "name": found[1], "slot": slot})
     wins = sum(row["wins"] for row in rows)
     matches = sum(row["matches"] for row in rows)
-    band = {"band": "all", "label": "All ranks", "unlocks": [], "ult": {}, "spend": {}, "states": {}}
+    band = {"band": "all", "label": "All ranks", "unlocks": [], "ult": {}, "strategies": {}, "spend": {}, "states": {}}
+    coverage = 0
     if len(abilities) == 4:
-        unlocks, ults, spend, states = build(rows, [ability["id"] for ability in abilities])
+        unlocks, ults, strategies, spend, states = build(rows, [ability["id"] for ability in abilities])
         band["unlocks"] = rows_of(unlocks)
-        kept = {str(row[0]) for row in band["unlocks"]}
-        band["ult"] = {code: rows_of(table) for code, table in ults.items() if str(code) in kept}
-        band["spend"] = {str(code): serialize(prune(node), 0) for code, node in spend.items() if str(code) in kept}
+        kept = {row[0] for row in band["unlocks"]}
+        band["ult"] = {str(code): rows_of(table) for code, table in ults.items() if code in kept}
+        band["strategies"] = {str(code): rows_of(table) for code, table in strategies.items() if code in kept}
+        orders = choosable(unlocks)
+        picks = {code: choosable(table) for code, table in strategies.items()}
+        band["spend"] = {
+            f"{code}:{strategy}": serialize(prune(node), 0)
+            for (code, strategy), node in spend.items()
+            if code in orders and strategy in picks.get(code, set())
+        }
         band["states"] = {key: r for key, table in states.items() if (r := rows_of(table))}
+        coverage = sum(n for table in strategies.values() for _, n in table.values())
     return {
         "id": hero["id"],
         "name": hero["name"],
@@ -201,6 +258,7 @@ def hero_tree(hero, names, window):
         "matches": matches,
         "abilities": abilities,
         "bands": [band],
+        "_coverage": coverage,
     }
 
 
@@ -235,20 +293,27 @@ def main():
         if row["matches"] <= 0 or len(row["abilities"]) < 4:
             print("skip", hero["name"], "matches", row["matches"])
             continue
+        coverage = row.pop("_coverage")
         built.append(row)
         nodes = sum(count_nodes(root) for root in row["bands"][0]["spend"].values())
-        print(f"{hero['name']:16} {row['matches']:7} games  {len(row['bands'][0]['unlocks'])} orders  {nodes:5} nodes")
+        share = coverage / row["matches"] if row["matches"] else 0
+        print(
+            f"{hero['name']:16} {row['matches']:7} games  {len(row['bands'][0]['spend']):3} strategy trees"
+            f"  {nodes:6} nodes  {share:.1%} with a strategy"
+        )
     payload = {
         "fetchedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "window": info["label"],
         "heroes": built,
     }
     text = (
-        "// Ability unlock orders and point-spend trees. The board reads this file and does not call the API.\n"
+        "// Ability unlock orders, point-allocation strategies and spend trees. The board reads this file and does not call the API.\n"
         "import type { AbilityOrders } from \"@/lib/ability-path\";\n\n"
         f"export const abilityOrders: AbilityOrders = {json.dumps(payload, separators=(',', ':'))};\n"
     )
     OUT.write_text(text)
+    total = sum(MAXES.values()) or 1
+    print("maxed abilities:", {k: f"{v / total:.1%}" for k, v in sorted(MAXES.items())})
     print("wrote", OUT, "heroes", len(built), "bytes", OUT.stat().st_size)
 
 

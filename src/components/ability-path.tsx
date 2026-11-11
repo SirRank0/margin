@@ -9,6 +9,7 @@ import {
   MIN_SHARE,
   PRIOR_K,
   SEPARATED_P,
+  STRATEGY_DECISION,
   TOTAL_POINTS,
   ultOptionLabel,
   type Click,
@@ -81,6 +82,8 @@ export function AbilityPathSection() {
 
   if (!hero || !path) return null;
   const names = new Map(hero.abilities.map((ability) => [ability.id, ability.name]));
+  const strategy = path.decisions.find((decision) => decision.kind === "strategy");
+  const strategySwitched = strategy ? branches[strategy.id] !== undefined : false;
   const overall = wilson(hero.wins, hero.matches);
   const activeKey = coarse ? (openKey ?? pinKey) : (hoverKey ?? pinKey);
   const activeIndex = path.clicks.findIndex((click, index) => `${click.ability}-${click.rank}-${index}` === activeKey);
@@ -106,28 +109,31 @@ export function AbilityPathSection() {
         <div className="max-w-2xl">
           <h2 className="font-display text-2xl text-fg">Ability order</h2>
           <p className="mt-1 text-pretty text-sm text-muted">
-            Unlocking and upgrading are separate. Unlocks arrive at boon levels 0, 2, 4 and 7: the
-            first three go on basic abilities in any order, the fourth is the ultimate&apos;s. Points
-            arrive at the other levels, {TOTAL_POINTS} in all, and each ability&apos;s 1-, 2- and
-            5-point upgrades are bought in turn. So the path makes two decisions from public games.
-            First the order of the three basic unlocks, and where the ultimate unlock went. Then,
-            under that unlock order, the order the 12 upgrades were bought in. Upgrades bought within
-            a few seconds of each other count as one purchase, so their order inside it is not a
-            choice. Each choice takes the best win rate after pulling it toward the win rate of the
-            games that got this far ({PRIOR_K.toLocaleString()} games of pull), so a small sample
-            cannot win on luck. A choice needs at least {MIN_BRANCH.toLocaleString()} games and at
-            least {Math.round(MIN_SHARE * 100)}% of the most-played choice&apos;s games. It is marked
-            separated when there is at least a {Math.round(SEPARATED_P * 100)}% chance it beats the
-            runner-up shown next to it, and tied otherwise. A tied choice can be switched, and every
-            choice after it is walked again. When the exact line runs out of games, the next upgrade
-            comes from all games at the same upgrades, unlocks and points spent, and if nothing has
-            enough games the most-played legal one is taken. Both are marked low confidence, as is any
-            choice under {LOW_CONFIDENCE_GAMES.toLocaleString()} games. The list lays both decisions
-            on the level schedule: each unlock is used when it arrives, and each upgrade is bought as
-            soon as its points are there. &quot;Saved&quot; marks an upgrade that points were held for.
-            {" "}{dataWindow.label}. The next patch stays on the last 30 days until the median hero
-            has {dataWindow.enough.toLocaleString()} games in it. This is not part of the comp odds,
-            and it is not split by rank.
+            Unlocking and upgrading are separate (see docs/ability-mechanics.md). Unlocks arrive at
+            boon levels 0, 2, 4 and 7: the first three go on basic abilities in any order, the fourth
+            is the ultimate&apos;s. Points arrive at every other level up to 35, {TOTAL_POINTS} in
+            all, and each ability&apos;s upgrades cost 1, 2 and 5 points, in turn. Points can be
+            held for a later upgrade. From public games the path picks, in order: the order of the
+            three basic unlocks; where the ultimate unlock went; a point-allocation strategy, which is
+            the first and second ability maxed and how much else had its 2-point upgrade before the
+            first max; and the best order of the 12 upgrades inside that strategy. Upgrades bought
+            within a few seconds of each other count as one purchase. Each pick takes the best win
+            rate after pulling it toward the win rate of the games that got this far
+            ({PRIOR_K.toLocaleString()} games of pull), so a small sample cannot win on luck, and needs
+            at least {MIN_BRANCH.toLocaleString()} games and {Math.round(MIN_SHARE * 100)}% of the
+            most-played option&apos;s games. It is separated when there is at least a{" "}
+            {Math.round(SEPARATED_P * 100)}% chance it beats the runner-up, and tied otherwise.
+            Strategies the best one cannot be told apart from are listed as alternatives, each with
+            its own path. A tied pick can be switched, and every pick after it is walked again. When
+            the exact line runs out of games, the next upgrade comes from all games at the same
+            upgrades, unlocks and points spent, and if nothing has enough games the most-played
+            upgrade that keeps the strategy is taken. Both are marked low confidence, as is any pick
+            under {LOW_CONFIDENCE_GAMES.toLocaleString()} games. The click list lays the picks on the
+            level schedule: each unlock is used when it arrives, each upgrade is bought as soon as
+            its points are there. Strategy win rates come from games long enough to max two
+            abilities (level 19 or later). {dataWindow.label}. The next patch stays on the last 30
+            days until the median hero has {dataWindow.enough.toLocaleString()} games in it. This is
+            not part of the comp odds, and it is not split by rank.
           </p>
         </div>
         <div className="flex items-end gap-3">
@@ -156,6 +162,52 @@ export function AbilityPathSection() {
         Unlock order: {path.unlockOrder.map((id) => names.get(id) ?? "Unknown").join(" → ")} ·{" "}
         {ultOptionLabel(path.ult)}
       </p>
+      {strategy && (
+        <div className="mt-3 rounded-card border border-line bg-raised p-3 text-sm">
+          <p className="font-medium text-fg">
+            {strategy.chosen.name}
+            <span className="ml-2 font-normal text-amber">
+              {strategy.separated ? "separated" : "tied"}
+            </span>
+            {strategy.lowConfidence && <span className="ml-2 font-normal text-muted">low confidence</span>}
+          </p>
+          <p className="mt-1 tabular-nums text-muted">
+            {pct(strategy.chosen.rate)} shrunk · {pct(wilson(strategy.chosen.wins, strategy.chosen.matches).p)} ·{" "}
+            {compact(strategy.chosen.matches)} games
+          </p>
+          {strategySwitched && (
+            <button
+              type="button"
+              className="mt-1 text-amber underline-offset-2 hover:underline"
+              onClick={() => setBranches((current) => applySwitch(current, STRATEGY_DECISION, null))}
+            >
+              Back to the best strategy
+            </button>
+          )}
+          {path.alternatives.length > 0 && (
+            <ul className="mt-2 grid gap-1">
+              {path.alternatives.map((alternative) => (
+                <li key={alternative.strategy} className="text-muted">
+                  <span className="text-fg">{alternative.name}</span> · {pct(alternative.rate)} shrunk ·{" "}
+                  {compact(alternative.matches)} games
+                  {alternative.best
+                    ? " · the best strategy"
+                    : ` · ${Math.round(alternative.pBestBetter * 100)}% chance the best is better`}
+                  <button
+                    type="button"
+                    className="ml-2 text-amber underline-offset-2 hover:underline"
+                    onClick={() =>
+                      setBranches((current) => applySwitch(current, STRATEGY_DECISION, alternative.strategy))
+                    }
+                  >
+                    Switch
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <ol ref={listRef} className="mt-4 grid gap-2 sm:grid-cols-2">
         {path.clicks.map((click, index) => {
           const abilityName = names.get(click.ability) ?? "Unknown";
@@ -199,12 +251,7 @@ export function AbilityPathSection() {
             >
               <span className="text-muted tabular-nums">{index + 1}</span>
               <span className="min-w-0 flex-1 truncate text-fg">{abilityName}</span>
-              {path.steps[index]?.saved && (
-                <span className="text-xs text-muted" title="Points were held across a level for this upgrade.">
-                  saved
-                </span>
-              )}
-              <span className="text-xs tabular-nums text-muted" title="Earliest boon level for this click.">
+              <span className="text-xs tabular-nums text-muted" title="Boon level of this click on the schedule.">
                 L{path.steps[index]?.level ?? "?"}
               </span>
               <span className="tabular-nums text-amber" title={rankTitle(click.rank)}>
@@ -229,7 +276,7 @@ export function AbilityPathSection() {
         />
       )}
       <div className="mt-4 grid gap-3">
-        {path.decisions.map((decision) => {
+        {path.decisions.filter((decision) => decision.kind !== "strategy").map((decision) => {
           const chosen = wilson(decision.chosen.wins, decision.chosen.matches);
           const other = decision.other ? wilson(decision.other.wins, decision.other.matches) : null;
           const switched = branches[decision.id] !== undefined;
@@ -237,7 +284,7 @@ export function AbilityPathSection() {
             <div key={decision.id} className="text-sm">
               <p className="font-medium text-fg">
                 {decision.kind === "spend"
-                  ? `Upgrade ${decision.index - 1}: ${decision.label}`
+                  ? `Upgrade ${decision.index - STRATEGY_DECISION}: ${decision.label}`
                   : `${decision.label}: ${decision.chosen.name}`}
                 <span className="ml-2 font-normal text-amber" title={decision.separated ? "At least a 95% chance this line is better." : "Under a 95% chance, so the lines are tied."}>
                   {decision.separated ? "separated" : "tied"}
