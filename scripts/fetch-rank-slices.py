@@ -3,6 +3,8 @@
 The window is games since the latest balance patch when the median hero has
 at least 2,400 of them, and the API's last 30 days otherwise. A rank slice
 keeps matches whose two teams both averaged that badge tier.
+Pair and counter stats are team-wide (`same_lane_filter=false`);
+lane leftovers still come from /v1/analytics/lane-matchup-stats.
 """
 
 import json
@@ -157,8 +159,10 @@ def main():
         ident, label, params = band
         query = {**window, **params}
         heroes = get("/v1/analytics/hero-stats", query)
-        pairs = get("/v1/analytics/hero-synergy-stats", query)
-        counters = get("/v1/analytics/hero-counter-stats", {**query, "min_matches": PAIR_MIN})
+        # Team-wide, not the API default (same lane only). Streets stay on lane-matchup-stats.
+        team = {**query, "same_lane_filter": "false"}
+        pairs = get("/v1/analytics/hero-synergy-stats", team)
+        counters = get("/v1/analytics/hero-counter-stats", {**team, "min_matches": PAIR_MIN})
         items = get("/v1/analytics/item-stats", query)
         built = slice_meta(heroes, pairs, items, names, counters)
         built["id"] = ident

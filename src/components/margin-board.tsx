@@ -11,6 +11,7 @@ import { compareHeroNames, compareHeroSearch, heroSearchRank } from "@/lib/hero-
 import { dataWindow } from "@/data/data-window";
 import { laneMatchups } from "@/data/margin-lanes";
 import { rankSlices } from "@/data/margin-ranks";
+import { ChangelogSection } from "@/components/changelog";
 
 const SEATS = 6;
 const LANE_NAMES = ["York", "Broadway", "Greenwich"] as const;
@@ -20,6 +21,7 @@ const TABS = [
   { id: "lane", label: "Lane" },
   { id: "builder", label: "Builder" },
   { id: "courier", label: "Build courier" },
+  { id: "changelog", label: "What's new" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["id"];
@@ -82,6 +84,11 @@ export function MarginBoard() {
       {tab === "builder" ? (
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
           <BuildEditor />
+        </main>
+      ) : null}
+      {tab === "changelog" ? (
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+          <ChangelogSection />
         </main>
       ) : null}
     </div>
@@ -623,12 +630,14 @@ function MathNotes() {
           <span className="text-fg">A pair only adds the extra.</span> Two strong heroes will win a
           lot together even if they do nothing special as a pair. That expected rate is subtracted.
           What remains is synergy if they win more than expected, or anti-synergy if they win less.
-          An ordinary pair adds nothing.
+          An ordinary pair adds nothing. A pair counts every game those two shared a team, not only
+          games they shared a lane.
         </p>
         <p>
           <span className="text-fg">A matchup works the same way.</span> "We win because our hero
           is strong and theirs is weak" is already counted in the two hero rates. Only a real
-          counter, beyond that, is added.
+          counter, beyond that, is added. A matchup also counts every game those two were on
+          opposite teams, not only games they shared a lane.
         </p>
         <p>
           <span className="text-fg">A lane is the same idea for a street.</span> It is used only
