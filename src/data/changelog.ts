@@ -14,6 +14,10 @@ export type ChangelogEntry = {
 export const changelog: ChangelogEntry[] = [
   {
     date: "2026-11-11",
+    text: "Hero cards now show the model win rate the chance uses, then the raw record, and mark small samples instead of leading with a raw rate from a handful of games.",
+  },
+  {
+    date: "2026-11-11",
     text: "Assigning a street can change the chance again, using games at the rank you picked, instead of always adding nothing.",
     link: "https://github.com/SirRank0/margin/pull/15",
   },
