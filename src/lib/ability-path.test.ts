@@ -1,256 +1,279 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildPath, choose, type HeroOrders } from "./ability-path.ts";
+import {
+  applySwitch,
+  buildPath,
+  isLegalClick,
+  LOW_CONFIDENCE_GAMES,
+  MIN_BRANCH,
+  PATH_LENGTH,
+  type AbilityInfo,
+  type AbilityOrders,
+  type HeroOrders,
+  type StateTable,
+  type TreeNode,
+} from "./ability-path.ts";
 
-test("a higher lower bound wins only when it clears the largest line", () => {
-  const separated = choose([
-    { id: "common", wins: 4220, matches: 10000 },
-    { id: "edge", wins: 280, matches: 500 },
-  ]);
-  assert.equal(separated?.row.id, "edge");
-  assert.equal(separated?.separated, true);
+// Synthetic hero: three basics (slots 1-3) and an ultimate (slot 4).
+const A = 10;
+const B = 11;
+const C = 12;
+const U = 13;
+const ABILITIES: AbilityInfo[] = [
+  { id: A, name: "Alpha", slot: 1 },
+  { id: B, name: "Beta", slot: 2 },
+  { id: C, name: "Gamma", slot: 3 },
+  { id: U, name: "Ult", slot: 4 },
+];
+/** A full legal order: each ability four times, ultimate after the three basic unlocks. */
+const FULL = [A, A, B, A, C, U, A, B, B, B, C, C, C, U, U, U];
 
-  const tied = choose([
-    { id: "common", wins: 5500, matches: 10000 },
-    { id: "edge", wins: 290, matches: 500 },
-  ]);
-  assert.equal(tied?.row.id, "common");
-  assert.equal(tied?.separated, false);
-});
+type Row = { seq: number[]; wins: number; matches: number };
 
-test("the first 5 follows the first-max table, including the ultimate", () => {
-  const hero: HeroOrders = {
-    id: 1,
-    name: "Fixture",
-    wins: 550,
-    matches: 1000,
-    abilities: [
-      { id: 10, name: "Grenade", slot: 1 },
-      { id: 11, name: "Swarm", slot: 2 },
-      { id: 12, name: "Armor", slot: 3 },
-      { id: 13, name: "Ult", slot: 4 },
-    ],
-    openUpgrade: [
-      { ability: 10, wins: 5530, matches: 10000 },
-      { ability: 12, wins: 2740, matches: 5000 },
-      { ability: 11, wins: 1600, matches: 3000 },
-    ],
-    prefix3: [
-      { clicks: [10, 10, 11], wins: 2760, matches: 5000 },
-      { clicks: [10, 10, 12], wins: 2216, matches: 4000 },
-    ],
-    beforeFive: [
-      { t2s: [10], five: 10, wins: 2865, matches: 5000 },
-      { t2s: [10, 12], five: 12, wins: 10212, matches: 18000 },
-      { t2s: [12, 11], five: 11, wins: 1038, matches: 2000 },
-    ],
-    fiveBeforeUlt: [
-      { ability: 10, wins: 4552, matches: 8000 },
-      { ability: 12, wins: 2740, matches: 5000 },
-      { ability: 11, wins: 1032, matches: 2000 },
-    ],
-    firstMax: [
-      { ability: 10, wins: 5690, matches: 10000 },
-      { ability: 13, wins: 5510, matches: 10000 },
-      { ability: 12, wins: 5460, matches: 10000 },
-      { ability: 11, wins: 1548, matches: 3000 },
-    ],
-    ultBeforeFive: { wins: 21960, matches: 40000 },
-    fiveBeforeUltAny: { wins: 8800, matches: 16000 },
-  };
-  const path = buildPath(hero);
-  const ranks = path.clicks.map((click) => `${click.ability}:${click.rank}`);
-  const ultUnlock = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 0);
-  assert.equal(ultUnlock, 6);
-  assert.equal(
-    path.clicks.slice(0, ultUnlock).filter((click) => click.rank === 0).length,
-    3,
-  );
-  assert.ok(path.clicks.findIndex((click) => click.rank === 5) > ultUnlock);
-  const firstFive = path.clicks.find((click) => click.rank === 5);
-  assert.equal(firstFive?.ability, 10);
-  const ultFive = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 5);
-  const grenadeFive = path.clicks.findIndex((click) => click.ability === 10 && click.rank === 5);
-  assert.ok(grenadeFive < ultFive);
-  assert.deepEqual(ranks.slice(0, 9), [
-    "10:0",
-    "10:1",
-    "11:0",
-    "11:1",
-    "12:0",
-    "12:1",
-    "13:0",
-    "13:1",
-    "13:2",
-  ]);
-  const cost = { 0: 0, 1: 1, 2: 2, 5: 5 } as const;
-  const spent = new Map<number, number>();
-  const reached = new Map<number, number>();
-  for (const click of path.clicks) {
-    const prior = reached.get(click.ability) ?? -1;
-    const order = [0, 1, 2, 5];
-    assert.equal(order.indexOf(click.rank), prior + 1);
-    reached.set(click.ability, prior + 1);
-    if (click.rank === 5) assert.equal((spent.get(click.ability) ?? 0) + 5, 8);
-    spent.set(click.ability, (spent.get(click.ability) ?? 0) + cost[click.rank]);
+/** Same construction as scripts/fetch-ability-orders.py: a trie plus the rank-vector table. */
+function hero(rows: Row[], extraStates: StateTable = {}): HeroOrders {
+  const root: TreeNode = [0, 0, 0, []];
+  const states: StateTable = {};
+  const slotIds = [A, B, C, U];
+  for (const row of rows) {
+    root[1] += row.wins;
+    root[2] += row.matches;
+    let node = root;
+    const ranks = [0, 0, 0, 0];
+    for (const ability of row.seq) {
+      const key = ranks.join(",");
+      const bucket = (states[key] ??= []);
+      const entry = bucket.find((item) => item[0] === ability);
+      if (entry) {
+        entry[1] += row.wins;
+        entry[2] += row.matches;
+      } else bucket.push([ability, row.wins, row.matches]);
+      ranks[slotIds.indexOf(ability)] += 1;
+      let child = node[3].find((item) => item[0] === ability);
+      if (!child) {
+        child = [ability, 0, 0, []];
+        node[3].push(child);
+      }
+      child[1] += row.wins;
+      child[2] += row.matches;
+      node = child;
+    }
   }
-  const five = path.decisions.find((row) => row.label.startsWith("First 5"));
-  assert.equal(five?.separated, false);
-  assert.equal(five?.chosen.name.includes("Grenade"), true);
-});
-
-test("the ultimate is maxed first when its first-max line is the largest and nothing clears it", () => {
-  const hero: HeroOrders = {
-    id: 2,
-    name: "UltFirst",
-    wins: 480,
-    matches: 1000,
-    abilities: [
-      { id: 10, name: "Grenade", slot: 1 },
-      { id: 11, name: "Swarm", slot: 2 },
-      { id: 12, name: "Armor", slot: 3 },
-      { id: 13, name: "Ult", slot: 4 },
-    ],
-    openUpgrade: [{ ability: 10, wins: 4800, matches: 10000 }],
-    prefix3: [{ clicks: [10, 10, 11], wins: 2400, matches: 5000 }],
-    beforeFive: [{ t2s: [10, 11], five: 10, wins: 2400, matches: 5000 }],
-    fiveBeforeUlt: [{ ability: 10, wins: 2300, matches: 5000 }],
-    firstMax: [
-      { ability: 13, wins: 4800, matches: 10000 },
-      { ability: 10, wins: 2350, matches: 5000 },
-    ],
-    ultBeforeFive: { wins: 7000, matches: 14000 },
-    fiveBeforeUltAny: { wins: 2300, matches: 5000 },
-    earlyPoints: {
-      spread: { wins: 2000, matches: 4000 },
-      rush: [{ ability: 10, wins: 4800, matches: 10000 }],
-    },
-  };
-  const path = buildPath(hero);
-  const ultFive = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 5);
-  const basicFive = path.clicks.findIndex((click) => click.ability !== 13 && click.rank === 5);
-  assert.ok(ultFive >= 0 && basicFive >= 0 && ultFive < basicFive);
-  const ultTwo = path.clicks.findIndex((click) => click.ability === 13 && click.rank === 2);
-  assert.ok(ultTwo >= 0 && ultTwo < ultFive);
-  const five = path.decisions.find((row) => row.label === "First 5-point upgrade");
-  assert.equal(five?.chosen.name, "Ult");
-  assert.equal(five?.separated, false);
-});
-
-test("an early 2-point rank is shown only when no other opening clears it", () => {
-  const hero: HeroOrders = {
+  for (const [key, extra] of Object.entries(extraStates)) states[key] = extra;
+  return {
     id: 1,
     name: "Fixture",
-    wins: 550,
-    matches: 1000,
-    abilities: [
-      { id: 10, name: "Grenade", slot: 1 },
-      { id: 11, name: "Swarm", slot: 2 },
-      { id: 12, name: "Armor", slot: 3 },
-      { id: 13, name: "Ult", slot: 4 },
-    ],
-    openUpgrade: [{ ability: 11, wins: 1600, matches: 3000 }],
-    prefix3: [{ clicks: [10, 10, 11], wins: 2760, matches: 5000 }],
-    beforeFive: [{ t2s: [10], five: 10, wins: 2865, matches: 5000 }],
-    fiveBeforeUlt: [{ ability: 10, wins: 4552, matches: 8000 }],
-    firstMax: [
-      { ability: 10, wins: 5690, matches: 10000 },
-      { ability: 11, wins: 1548, matches: 3000 },
-    ],
-    ultBeforeFive: { wins: 1100, matches: 2000 },
-    fiveBeforeUltAny: { wins: 2800, matches: 5000 },
-    earlyPoints: {
-      spread: { wins: 5400, matches: 10000 },
-      rush: [
-        { ability: 10, wins: 5720, matches: 10000 },
-        { ability: 11, wins: 5000, matches: 10000 },
-      ],
-    },
+    wins: root[1],
+    matches: root[2],
+    abilities: ABILITIES,
+    bands: [{ band: "all", label: "All ranks", root, states }],
   };
-  const path = buildPath(hero);
-  const ranks = path.clicks.map((click) => `${click.ability}:${click.rank}`);
-  assert.deepEqual(ranks.slice(0, 8), ["10:0", "10:1", "11:0", "11:1", "12:0", "10:2", "13:0", "12:1"]);
-  const opening = path.decisions.find((row) => row.label === "First four points");
-  assert.equal(opening?.separated, true);
-  assert.equal(opening?.chosen.name.includes("Grenade"), true);
+}
+
+/** Complete `head` into a full 16-click order (each ability four times, in slot order). */
+function seq(...head: number[]) {
+  const counts = new Map<number, number>();
+  for (const id of head) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const out = [...head];
+  for (const id of [A, B, C, U]) {
+    while ((counts.get(id) ?? 0) < 4) {
+      out.push(id);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
+function assertFullLegal(path: ReturnType<typeof buildPath>, abilities: AbilityInfo[]) {
+  const ranks = new Map<number, number>();
+  for (const click of path.clicks) {
+    assert.ok(isLegalClick(click.ability, ranks, abilities), `illegal click ${click.ability}`);
+    const next = (ranks.get(click.ability) ?? 0) + 1;
+    ranks.set(click.ability, next);
+    assert.equal(click.rank, [0, 1, 2, 5][next - 1]);
+  }
+  assert.equal(path.clicks.length, Math.min(PATH_LENGTH, abilities.length * 4));
+}
+
+test("shrinkage: a small line cannot beat a large one on luck", () => {
+  // 200 games at 60% vs 100,000 at 51.5%: the small line is under 5% of the large one's games.
+  const h = hero([
+    { seq: seq(A), wins: 51_500, matches: 100_000 },
+    { seq: seq(B), wins: 120, matches: 200 },
+  ]);
+  assert.equal(buildPath(h).clicks[0].ability, A);
+
+  const h2 = hero([
+    { seq: seq(A), wins: 50_000, matches: 100_000 },
+    { seq: seq(B), wins: 10_800, matches: 20_000 },
+  ]);
+  const first = buildPath(h2).decisions[0];
+  assert.equal(first.click.ability, B, "a large real edge wins");
+  assert.equal(first.separated, true);
+  assert.equal(first.other?.name, "Alpha");
 });
 
-test("the next 5 is conditional on the ones already maxed", () => {
-  const hero: HeroOrders = {
-    id: 3,
-    name: "Chain",
-    wins: 480,
-    matches: 1000,
-    abilities: [
-      { id: 10, name: "Grenade", slot: 1 },
-      { id: 11, name: "Swarm", slot: 2 },
-      { id: 12, name: "Armor", slot: 3 },
-      { id: 13, name: "Ult", slot: 4 },
-    ],
-    openUpgrade: [{ ability: 10, wins: 4800, matches: 10000 }],
-    prefix3: [{ clicks: [10, 10, 11], wins: 2400, matches: 5000 }],
-    beforeFive: [],
-    fiveBeforeUlt: [],
-    firstMax: [
-      { ability: 13, wins: 4800, matches: 10000 },
-      { ability: 10, wins: 3360, matches: 8000 },
-      { ability: 12, wins: 500, matches: 1000 },
-    ],
-    ultBeforeFive: { wins: 1000, matches: 2000 },
-    fiveBeforeUltAny: { wins: 1000, matches: 2000 },
-    maxSteps: [
-      { prefix: [], ability: 13, wins: 4800, matches: 10000 },
-      { prefix: [], ability: 10, wins: 2000, matches: 5000 },
-      { prefix: [13], ability: 10, wins: 4200, matches: 10000 },
-      { prefix: [13], ability: 12, wins: 2900, matches: 5000 },
-      { prefix: [13, 12], ability: 10, wins: 2500, matches: 5000 },
-      { prefix: [13, 12], ability: 11, wins: 2000, matches: 4000 },
-      { prefix: [13, 12, 10], ability: 11, wins: 2000, matches: 4000 },
-    ],
-  };
-  const path = buildPath(hero);
-  const fives = path.clicks.filter((click) => click.rank === 5).map((click) => click.ability);
-  assert.deepEqual(fives, [13, 12, 10, 11]);
-  const second = path.decisions.find((row) => row.label === "Second 5-point upgrade");
-  assert.equal(second?.chosen.name, "Armor");
-  assert.equal(second?.separated, true);
-  assert.equal(second?.other?.name, "Grenade");
+test("MIN_SHARE rejects a thin line (Mina-like 1,045 vs 155,996)", () => {
+  const h = hero([
+    { seq: seq(A, A, B, C), wins: 72_681, matches: 155_996 },
+    { seq: seq(A, A, B, B), wins: 530, matches: 1_045 }, // 50.7% on 1,045 games
+  ]);
+  const fourth = buildPath(h).decisions[3];
+  assert.equal(fourth.click.ability, C);
+  assert.equal(fourth.other, null, "the thin line is not a rival either");
 });
 
-test("a look-ahead that does not change the 5 keeps that step's own games", () => {
-  const hero: HeroOrders = {
-    id: 4,
-    name: "Warden-shaped",
-    wins: 500,
-    matches: 1000,
-    abilities: [
-      { id: 10, name: "Flask", slot: 1 },
-      { id: 11, name: "Word", slot: 2 },
-      { id: 12, name: "Will", slot: 3 },
-      { id: 13, name: "Ult", slot: 4 },
+test("MIN_BRANCH rejects a line under 200 games even with a large share", () => {
+  const h = hero([
+    { seq: seq(A), wins: 500, matches: 1_000 },
+    { seq: seq(B), wins: 140, matches: MIN_BRANCH - 50 }, // 15% share, 93% win rate
+  ]);
+  assert.equal(buildPath(h).clicks[0].ability, A);
+});
+
+test("backoff: an exhausted tree node uses the state table and is low confidence", () => {
+  // The tree only knows two clicks; the state table knows what follows rank vector 2,0,0,0.
+  const h = hero([{ seq: [A, A], wins: 5_000, matches: 10_000 }], {
+    "2,0,0,0": [
+      [C, 3_000, 5_000],
+      [B, 2_000, 5_000],
     ],
-    openUpgrade: [{ ability: 10, wins: 500, matches: 1000 }],
-    prefix3: [{ clicks: [10, 10, 11], wins: 500, matches: 1000 }],
-    beforeFive: [],
-    fiveBeforeUlt: [],
-    firstMax: [{ ability: 10, wins: 1800, matches: 3500 }],
-    ultBeforeFive: { wins: 100, matches: 200 },
-    fiveBeforeUltAny: { wins: 400, matches: 800 },
-    maxSteps: [
-      { prefix: [], ability: 10, wins: 1800, matches: 3500 },
-      { prefix: [], ability: 11, wins: 200, matches: 400 },
-      { prefix: [10], ability: 11, wins: 1300, matches: 2500 },
-      { prefix: [10], ability: 12, wins: 200, matches: 400 },
-    ],
-    continuation: [
-      { prefix: [], five: 10, nextFive: 11, wins: 1300, matches: 2500 },
-    ],
-  };
-  const path = buildPath(hero);
-  const first = path.decisions.find((row) => row.label === "First 5-point upgrade");
-  const second = path.decisions.find((row) => row.label === "Second 5-point upgrade");
-  assert.equal(first?.chosen.name, "Flask");
-  assert.equal(first?.chosen.matches, 3500);
-  assert.equal(second?.chosen.name, "Word");
-  assert.equal(second?.chosen.matches, 2500);
+  });
+  const third = buildPath(h).decisions[2];
+  assert.equal(third.source, "state");
+  assert.equal(third.lowConfidence, true);
+  assert.equal(third.click.ability, C);
+});
+
+test("never stop: thin tree and thin state table fall back to the most-played legal click", () => {
+  // Holliday-like: after four clicks the only children are under MIN_BRANCH, one of them the
+  // ultimate, which is not legal yet.
+  const h = hero([
+    { seq: seq(A, A, B, A, U), wins: 66, matches: 119 },
+    { seq: seq(A, A, B, A, C), wins: 54, matches: 102 },
+    { seq: [A, A, B, A], wins: 4_000, matches: 8_000 },
+  ]);
+  const path = buildPath(h);
+  assertFullLegal(path, ABILITIES);
+  const fifth = path.decisions[4];
+  assert.equal(fifth.click.ability, C, "the ultimate is skipped until all basics are unlocked");
+  assert.equal(fifth.source, "fallback");
+  assert.equal(fifth.lowConfidence, true);
+  assert.ok(path.decisions.slice(4).every((decision) => decision.lowConfidence));
+});
+
+test("never stop: no data at all still yields a full legal path", () => {
+  const h = hero([{ seq: [A], wins: 500, matches: 1_000 }]);
+  h.bands[0].states = {};
+  const path = buildPath(h);
+  assertFullLegal(path, ABILITIES);
+  assert.ok(path.decisions.slice(1).every((decision) => decision.source === "fallback"));
+});
+
+test("measured order is preserved: A,B,A stays A,B,A", () => {
+  const order = [A, B, A, C, U, A, A, B, B, B, C, C, C, U, U, U];
+  const h = hero([{ seq: order, wins: 6_000, matches: 10_000 }]);
+  const path = buildPath(h);
+  assert.deepEqual(
+    path.clicks.map((click) => click.ability),
+    order,
+  );
+  assert.deepEqual(path.clicks.slice(0, 3), [
+    { ability: A, rank: 0 },
+    { ability: B, rank: 0 },
+    { ability: A, rank: 1 },
+  ]);
+});
+
+test("click-N switch re-walks from that click and clears later switches", () => {
+  const h = hero([
+    // After A: B and C both 5,250 / 10,000, a dead tie (B wins on the id tie-break).
+    { seq: seq(A, B, B), wins: 5_250, matches: 10_000 },
+    { seq: seq(A, C, C), wins: 3_900, matches: 8_000 },
+    { seq: seq(A, C, A), wins: 1_350, matches: 2_000 },
+  ]);
+  const main = buildPath(h);
+  const tie = main.decisions[1];
+  assert.equal(tie.separated, false);
+  assert.ok(tie.alternateId !== null);
+
+  const switched = applySwitch({ "click-0": A, "click-5": B, "click-1": B }, 1, tie.alternateId);
+  assert.deepEqual(switched, { "click-0": A, "click-1": tie.alternateId });
+
+  const path = buildPath(h, applySwitch({}, 1, tie.alternateId));
+  assert.deepEqual(path.clicks.slice(0, 1), main.clicks.slice(0, 1));
+  assert.equal(path.clicks[1].ability, tie.alternateId);
+  assert.equal(path.decisions[1].source, "forced");
+  // Below the switch the walk follows the forced child's own subtree: C then A (67.5%) beats C, C (48.8%).
+  assert.equal(path.clicks[2].ability, A);
+  assertFullLegal(path, ABILITIES);
+
+  assert.deepEqual(buildPath(h, applySwitch(switched, 1, null)), main, "back to the main line");
+  assert.deepEqual(buildPath(h, { "click-0": main.clicks[0].ability }), main, "forcing the greedy click is a no-op");
+});
+
+test("the separated test and the displayed other use the same rival", () => {
+  // Runner-up by shrunk rate (B) is not the most-played alternative (C).
+  const h = hero([
+    { seq: seq(A), wins: 15_900, matches: 30_000 },
+    { seq: seq(B), wins: 2_640, matches: 5_000 },
+    { seq: seq(C), wins: 50_000, matches: 100_000 },
+  ]);
+  const first = buildPath(h).decisions[0];
+  assert.equal(first.click.ability, A);
+  assert.equal(first.other?.name, "Beta");
+  assert.ok(first.other && first.other.rate <= first.chosen.rate);
+});
+
+test("deterministic, and independent of child order", () => {
+  const rows: Row[] = [
+    { seq: seq(A, B), wins: 5_000, matches: 10_000 },
+    { seq: seq(B, A), wins: 5_000, matches: 10_000 },
+    { seq: seq(C, A), wins: 4_000, matches: 9_000 },
+  ];
+  const one = buildPath(hero(rows));
+  assert.deepEqual(buildPath(hero(rows)), one);
+  assert.deepEqual(buildPath(hero(rows.slice().reverse())), one);
+});
+
+test("ultimate guard: no ult unlock before all three basics, in tree, state and switches", () => {
+  const ranks = new Map([
+    [A, 1],
+    [B, 1],
+  ]);
+  assert.equal(isLegalClick(U, ranks, ABILITIES), false);
+  ranks.set(C, 1);
+  assert.equal(isLegalClick(U, ranks, ABILITIES), true);
+  assert.equal(isLegalClick(A, new Map([[A, 4]]), ABILITIES), false, "at most four appearances");
+  assert.equal(isLegalClick(99, new Map(), ABILITIES), false, "unknown ability");
+
+  // The most-played next click after A, B is an early ult; it must be skipped.
+  const h = hero([
+    { seq: seq(A, B, U), wins: 9_000, matches: 20_000 },
+    { seq: seq(A, B, C), wins: 1_000, matches: 2_000 },
+  ]);
+  const path = buildPath(h, { "click-2": U });
+  assert.equal(path.clicks[2].ability, C, "an illegal switch is ignored");
+  assertFullLegal(path, ABILITIES);
+  assertFullLegal(buildPath(h), ABILITIES);
+});
+
+test("low-confidence flag uses the named threshold", () => {
+  const h = hero([{ seq: FULL, wins: 300, matches: LOW_CONFIDENCE_GAMES - 1 }]);
+  assert.ok(buildPath(h).decisions.every((decision) => decision.lowConfidence));
+  const big = hero([{ seq: FULL, wins: 600, matches: LOW_CONFIDENCE_GAMES }]);
+  assert.ok(buildPath(big).decisions.every((decision) => !decision.lowConfidence));
+});
+
+test("snapshot: every hero in src/data/ability-orders.ts gets a full legal path", () => {
+  const source = readFileSync(new URL("../data/ability-orders.ts", import.meta.url), "utf8");
+  const json = source.slice(source.indexOf("= {") + 2, source.lastIndexOf("}") + 1);
+  const orders = JSON.parse(json) as AbilityOrders;
+  assert.ok(orders.heroes.length > 0);
+  for (const entry of orders.heroes) {
+    const path = buildPath(entry);
+    assertFullLegal(path, entry.abilities);
+    assert.deepEqual(buildPath(entry), path, `${entry.name} is deterministic`);
+  }
 });
