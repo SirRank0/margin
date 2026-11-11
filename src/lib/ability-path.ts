@@ -496,10 +496,8 @@ export function buildPath(hero: HeroOrders): AbilityPath {
     }
   }
 
-  // Early upgrades from the click walk. An ability clicked twice in the first
-  // three is at its 1-point rank; one that ends the walk repeated is being
-  // rushed, so continue it to its 2-point rank. Remaining basics get their
-  // 1-point rank before any 5.
+  // Only upgrades the walk measured. Forcing every basic to its 1-point rank
+  // inserted clicks the sequences do not play.
   if (walkedClicks.length > 0) {
     const counts = new Map<number, number>();
     for (const id of walkedClicks) counts.set(id, (counts.get(id) ?? 0) + 1);
@@ -507,9 +505,6 @@ export function buildPath(hero: HeroOrders): AbilityPath {
       if (count >= 2) enqueue(id, 1);
       if (count >= 3) enqueue(id, 2);
     }
-  }
-  for (const id of [opener, second, third]) {
-    if (walkedClicks.filter((click) => click === id).length < 2) enqueue(id, 1);
   }
   for (let index = 0; index < maxOrder.length; index += 1) {
     const id = maxOrder[index];
