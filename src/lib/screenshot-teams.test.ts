@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HEROES } from "./deadlock/heroes.ts";
-import { assignNamedTeams, chooseRowHero, findHeroNameRows, heroFaceUrl, indexFace, matchFace, matchHeroName, portraitId, readTeams, type RgbImage } from "./screenshot-teams.ts";
+import { assignNamedTeams, chooseRowHero, findHeroNameRows, matchHeroName, type RgbImage } from "./screenshot-teams.ts";
 
 function image(w: number, h: number, paint: (x: number, y: number) => [number, number, number]): RgbImage {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -17,52 +17,6 @@ function image(w: number, h: number, paint: (x: number, y: number) => [number, n
   }
   return { w, h, data };
 }
-
-function mosaic(colors: [number, number, number][]): RgbImage {
-  return image(32, 32, (x, y) => colors[(y < 16 ? 0 : 2) + (x < 16 ? 0 : 1)]);
-}
-
-function paste(dest: RgbImage, src: RgbImage, atX: number, atY: number) {
-  for (let y = 0; y < src.h; y++) {
-    for (let x = 0; x < src.w; x++) {
-      const from = (y * src.w + x) * 4;
-      const to = ((atY + y) * dest.w + atX + x) * 4;
-      dest.data[to] = src.data[from];
-      dest.data[to + 1] = src.data[from + 1];
-      dest.data[to + 2] = src.data[from + 2];
-      dest.data[to + 3] = 255;
-    }
-  }
-}
-
-const icons = [
-  { id: 1, image: mosaic([[220, 40, 40], [40, 40, 220], [220, 40, 40], [40, 40, 220]]) },
-  { id: 2, image: mosaic([[40, 200, 60], [240, 220, 40], [40, 180, 200], [240, 80, 20]]) },
-  { id: 3, image: mosaic([[180, 40, 180], [250, 250, 250], [20, 20, 20], [180, 40, 180]]) },
-  { id: 4, image: mosaic([[240, 140, 20], [20, 80, 160], [20, 80, 160], [240, 140, 20]]) },
-];
-
-test("a left group and a right group become the two sides", () => {
-  const shot = image(400, 140, () => [8, 8, 10]);
-  paste(shot, icons[0].image, 24, 50);
-  paste(shot, icons[1].image, 80, 50);
-  paste(shot, icons[2].image, 260, 50);
-  paste(shot, icons[3].image, 320, 50);
-  const read = readTeams(shot, icons);
-  assert.deepEqual(read.yours, [1, 2]);
-  assert.deepEqual(read.theirs, [3, 4]);
-});
-
-test("a top group and a bottom group split on the wider gap", () => {
-  const shot = image(160, 400, () => [8, 8, 10]);
-  paste(shot, icons[0].image, 40, 24);
-  paste(shot, icons[1].image, 90, 24);
-  paste(shot, icons[2].image, 40, 300);
-  paste(shot, icons[3].image, 90, 300);
-  const read = readTeams(shot, icons);
-  assert.deepEqual(read.yours, [1, 2]);
-  assert.deepEqual(read.theirs, [3, 4]);
-});
 
 test("scoreboard text maps to the hero, including a one-letter miss", () => {
   const lines = [
@@ -182,29 +136,6 @@ test("a team list on the right is found from the row bars, not a fixed side", ()
   assert.ok(rows.every((row) => row.x > shot.w / 2));
 });
 
-test("a clear portrait fills a blank name and does not replace a read name", () => {
-  const sure = { id: 4, score: 0.91, runner: 0.5, x: 0, y: 0, size: 40 };
-  const soft = { id: 4, score: 0.8, runner: 0.55, x: 0, y: 0, size: 40 };
-  const fill = { id: 4, score: 0.86, runner: 0.6, x: 0, y: 0, size: 40 };
-  const weak = { id: 4, score: 0.6, runner: 0.2, x: 0, y: 0, size: 40 };
-  assert.equal(portraitId(sure, 13), 4);
-  assert.equal(portraitId(soft, 13), 13);
-  assert.equal(portraitId(soft, null), null);
-  assert.equal(portraitId(fill, null), 4);
-  assert.equal(portraitId(weak, null), null);
-  assert.equal(portraitId(null, 13), 13);
-});
-
-test("a painted icon matches itself and not the other icon", () => {
-  const geist = image(48, 48, (x, y) => [40 + x * 3, 180 - y * 2, 70]);
-  const haze = image(48, 48, (x, y) => [20, 40 + y * 4, 220 - x * 3]);
-  const faces = [indexFace(4, geist), indexFace(13, haze)].filter((face) => face !== null);
-  const hit = matchFace(geist, 0, 0, 48, faces);
-  assert.ok(hit);
-  assert.equal(hit.id, 4);
-  assert.ok(hit.score - hit.runner >= 0.22);
-});
-
 test("Doorman matches The Doorman, including a dropped leading The", () => {
   const id = HEROES.find((hero) => hero.name === "The Doorman")?.id;
   assert.equal(id, 69);
@@ -213,8 +144,3 @@ test("Doorman matches The Doorman, including a dropped leading The", () => {
   }
 });
 
-test("portrait icon URLs work locally and under the Pages base path", () => {
-  assert.equal(heroFaceUrl(69, "/"), "/heroes/69.webp");
-  assert.equal(heroFaceUrl(69, "/margin/"), "/margin/heroes/69.webp");
-  assert.equal(heroFaceUrl(69, "/margin"), "/margin/heroes/69.webp");
-});
