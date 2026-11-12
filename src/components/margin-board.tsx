@@ -713,8 +713,7 @@ function MathNotes() {
         <p>
           <span className="text-fg">The rank menu changes which games are counted.</span> All ranks
           uses every game in the window. A named rank keeps games in that window where both teams
-          averaged that badge. The ability order is not split by rank. It always uses every game
-          in the same window.
+          averaged that badge.
         </p>
         <p>
           <span className="text-fg">Items are listed and then left out.</span> The rate is how
@@ -728,21 +727,11 @@ function MathNotes() {
           ranges overlap, both records are still compatible with one shared rate.
         </p>
         <p>
-          <span className="text-fg">Ability order is a separate section.</span> It asks which
-          upgrade won more often for that hero, among games that had already bought the earlier
-          upgrades. The line with the most games is kept unless another line's Wilson range does
-          not overlap it and both have at least 200 games. A line under 200 games is marked thin.
-          The first four points, the ones before the ultimate unlocks, use the opening with the
-          most games, unless another opening's range sits entirely above it. That opening is one
-          ability's 2-point rank, or the three 1-point ranks. Each 5-point rank is chosen from
-          the games that already maxed the earlier ones. When those games also record the next 5,
-          that next result can change which 5 is picked now. A later 5 is not compared with an
-          earlier 5 as if they were the same decision. On every ability the 2-point rank needs
-          the 1, so it has cost 3, and the 5-point rank needs both, so it has cost 8. A 5 is
-          never shown before the ultimate unlocks. The list uses the same window as the comp
-          odds, and it is not split by the rank menu: games since the latest balance patch once
-          the median hero has 2,400 of them, which keeps a 50% Wilson range inside about 2
-          points, and the last 30 days until then.
+          <span className="text-fg">Ability order is a separate tab.</span> It compares whole
+          upgrade plans from public matches: which ability you max first and second, and whether
+          you rush that first max or put points into the others along the way. Pick a rank there
+          to see what wins at your level. The full explanation is under How this is worked out
+          on that tab.
         </p>
       </div>
     </details>

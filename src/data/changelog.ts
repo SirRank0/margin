@@ -14,6 +14,10 @@ export type ChangelogEntry = {
 export const changelog: ChangelogEntry[] = [
   {
     date: "2026-11-11",
+    text: "The Comp odds explainer now matches how ability order actually works, and The Doorman is named the same way on every tab.",
+  },
+  {
+    date: "2026-11-11",
     text: "Hero cards now show the model win rate the chance uses, then the raw record, and mark small samples instead of leading with a raw rate from a handful of games.",
     link: "https://github.com/SirRank0/margin/pull/16",
   },
