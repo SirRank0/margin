@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scoreLobby, sigmoid, logit, wilson, heroRates, rankSample, HERO_THIN_MATCHES, LANE_PRIOR_K, type MarginMeta } from "./odds.ts";
+import { scoreLobby, sigmoid, logit, wilson, heroRates, rankSample, HERO_THIN_MATCHES, LANE_PRIOR_K, countedMatches, type MarginMeta } from "./odds.ts";
 import { rankSlices } from "../data/margin-ranks.ts";
 
 function meta(
@@ -294,6 +294,104 @@ test("a 200-game floor marks thin heroes, and a band is thin when its median her
   assert.equal(mixed.medianMatches, 65);
   assert.equal(mixed.thin, true);
   assert.equal(rankSample([{ matches: 423 }, { matches: 500 }, { matches: 600 }]).thin, false);
+});
+
+test("countedMatches leaves games with no recorded winner out of the total", () => {
+  assert.equal(countedMatches(14, 16, 31), 30);
+  assert.equal(countedMatches(50, 50, 100), 100);
+  assert.equal(countedMatches(0, 0, 12), 0);
+  // One side missing is handled by the caller; the helper still returns the scored games.
+  assert.equal(countedMatches(20, 0, 25), 20);
+  // Do not invent games if the two win totals exceed the stored count.
+  assert.equal(countedMatches(60, 50, 100), 100);
+});
+
+test("a matchup rate ignores matches with no recorded winner", () => {
+  const heroes = [
+    { id: 1, name: "A", wins: 5000, matches: 10000 },
+    { id: 2, name: "B", wins: 5000, matches: 10000 },
+    ...Array.from({ length: 15 }, (_, i) => ({
+      id: 10 + i,
+      name: `Field ${i}`,
+      wins: 5000,
+      matches: 10000,
+    })),
+  ];
+  const noise = Array.from({ length: 15 }, (_, i) => ({
+    hero: 10 + i,
+    enemy: 1,
+    wins: 5000,
+    matches: 10000,
+  }));
+  const dropped = scoreLobby(
+    meta(heroes, [], [
+      { hero: 1, enemy: 2, wins: 5000, matches: 11000 },
+      { hero: 2, enemy: 1, wins: 4000, matches: 11000 },
+      ...noise,
+    ]),
+    [1],
+    [2],
+  );
+  const alreadyCounted = scoreLobby(
+    meta(heroes, [], [
+      { hero: 1, enemy: 2, wins: 5000, matches: 9000 },
+      { hero: 2, enemy: 1, wins: 4000, matches: 9000 },
+      ...noise,
+    ]),
+    [1],
+    [2],
+  );
+  const counter = dropped.parts.find((part) => part.kind === "counter" && part.side === "yours");
+  const clean = alreadyCounted.parts.find((part) => part.kind === "counter" && part.side === "yours");
+  assert.ok(counter && clean);
+  assert.equal(counter.matches, 9000);
+  assert.ok(Math.abs(counter.observed - 5000 / 9000) < 1e-12);
+  assert.ok(Math.abs(counter.observed - 5000 / 11000) > 0.05);
+  assert.ok(Math.abs(dropped.probability - alreadyCounted.probability) < 1e-12);
+  assert.equal(clean.matches, 9000);
+  assert.ok(counter.observed > counter.predicted);
+  assert.ok(counter.leftover > 0);
+});
+
+test("a street rate ignores matches with no recorded winner", () => {
+  const heroes = [
+    { id: 1, name: "A", wins: 5000, matches: 10000 },
+    { id: 2, name: "B", wins: 5000, matches: 10000 },
+    { id: 3, name: "C", wins: 5000, matches: 10000 },
+    { id: 4, name: "D", wins: 5000, matches: 10000 },
+  ];
+  const bothWays = scoreLobby(
+    meta(heroes, [], [], [
+      { a: 1, b: 2, c: 3, d: 4, wins: 60, matches: 100 },
+      { a: 3, b: 4, c: 1, d: 2, wins: 30, matches: 100 },
+    ]),
+    [1, 2],
+    [3, 4],
+    [{ yours: [1, 2], theirs: [3, 4] }],
+  );
+  const oneWay = scoreLobby(
+    meta(heroes, [], [], [{ a: 1, b: 2, c: 3, d: 4, wins: 28, matches: 62 }]),
+    [1, 2],
+    [3, 4],
+    [{ yours: [1, 2], theirs: [3, 4] }],
+  );
+  const lane = bothWays.parts.find((part) => part.kind === "lane");
+  const untouched = oneWay.parts.find((part) => part.kind === "lane");
+  assert.ok(lane && untouched);
+  assert.equal(lane.matches, 90);
+  assert.ok(Math.abs(lane.observed - 60 / 90) < 1e-12);
+  assert.equal(untouched.matches, 62);
+  assert.ok(Math.abs(untouched.observed - 28 / 62) < 1e-12);
+  const flipped = scoreLobby(
+    meta(heroes, [], [], [
+      { a: 1, b: 2, c: 3, d: 4, wins: 60, matches: 100 },
+      { a: 3, b: 4, c: 1, d: 2, wins: 30, matches: 100 },
+    ]),
+    [3, 4],
+    [1, 2],
+    [{ yours: [3, 4], theirs: [1, 2] }],
+  );
+  assert.ok(Math.abs(bothWays.probability + flipped.probability - 1) < 1e-9);
 });
 
 test("live rank cards shrink thin Eternus and Initiate records toward the field", () => {
