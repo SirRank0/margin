@@ -10,7 +10,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -27,12 +27,24 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: python3 scripts/fetch-rank-slices.py
-      - run: python3 scripts/fetch-ability-orders.py
-      - run: python3 scripts/build_shop_items.py
+      # Merges deploy fast with the data already saved in the repo.
+      # The daily run (or a manual run) downloads fresh data and saves it back.
+      - name: Download fresh data
+        if: github.event_name != 'push'
+        run: |
+          python3 scripts/fetch-rank-slices.py
+          python3 scripts/fetch-ability-orders.py
+          python3 scripts/build_shop_items.py
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:pages
+      - name: Save fresh data to the repo
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "SirRank0"
+          git config user.email "sirrank0@users.noreply.github.com"
+          git add src/data/margin-ranks.ts src/data/ability-orders.ts src/data/shop-items.ts public/ability-orders
+          git diff --cached --quiet || (git commit -m "Daily data refresh" && git push)
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist-pages
