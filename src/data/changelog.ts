@@ -13,6 +13,11 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    date: "2026-11-12",
+    text: "Reading a screenshot can recognize The Doorman from the name 'Doorman', and portrait icons load correctly on the live site.",
+    link: "https://github.com/SirRank0/margin/pull/23",
+  },
+  {
     date: "2026-11-11",
     text: "Matches with no recorded winner are no longer counted as losses in matchup and street records.",
     link: "https://github.com/SirRank0/margin/pull/19",
