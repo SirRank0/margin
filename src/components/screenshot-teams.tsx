@@ -1,24 +1,16 @@
 import { useEffect, useState } from "react";
 import { HeroPortrait } from "@/components/hero-portrait";
 import {
-  assignNamedTeams,
   chooseRowHero,
   findHeroNameRows,
-  heroFaceUrl,
-  indexFace,
-  matchHeroName,
-  portraitId,
-  readPortraitColumn,
-  type FaceHit,
-  type FaceRef,
   type NameCrop,
   type RgbImage,
-  type TeamRead,
 } from "@/lib/screenshot-teams";
+import type { ScreenRead, SlotRead } from "@/lib/screenshot-read";
 
 type Hero = { id: number; name: string };
 
-const faceCache = new Map<number, Promise<FaceRef | null>>();
+type Seat = SlotRead & { pick: number | null; byName?: boolean };
 
 export function ScreenshotTeams({
   heroes,
@@ -27,9 +19,9 @@ export function ScreenshotTeams({
   heroes: Hero[];
   onApply: (yours: number[], theirs: number[]) => void;
 }) {
-  const [status, setStatus] = useState("Drop a scoreboard, or paste one.");
+  const [status, setStatus] = useState("Drop a screenshot, or paste one.");
   const [busy, setBusy] = useState(false);
-  const [read, setRead] = useState<TeamRead | null>(null);
+  const [seats, setSeats] = useState<Seat[] | null>(null);
   const byId = new Map(heroes.map((hero) => [hero.id, hero]));
 
   useEffect(() => {
@@ -49,60 +41,35 @@ export function ScreenshotTeams({
       return;
     }
     setBusy(true);
-    setRead(null);
-    setStatus("Matching the portraits beside the names…");
+    setSeats(null);
+    setStatus("Matching the hero pictures…");
     try {
-      const [shot, faces] = await Promise.all([loadShot(file), loadFaces(heroes)]);
+      const [shot, reader] = await Promise.all([
+        loadShot(file),
+        import("@/lib/screenshot-read"),
+      ]);
+      await frame();
       const rows = findHeroNameRows(shot);
-      if (rows.length === 0) {
+      const bank = reader.loadRefBank(heroes.map((hero) => hero.id));
+      const read = reader.readScreenshot(shot, bank, rows);
+      if (!read) {
         setStatus(
-          "No team list in that shot. Use the scoreboard or the pause-screen list. The in-game top bar is a skin, so those circles are not matched.",
+          "No hero pictures found. Use the top bar during a match, the pause-screen player list, or the scoreboard.",
         );
         return;
       }
-      const groups = groupRows(rows);
-      await frame();
-      const portraits = readPortraitColumn(
-        shot,
-        groups.map((group) => group[0].anchor),
-        groups.map((group) => group[0].x),
-        faces,
-      );
-      const named: { id: number | null; anchor: number; luma: number }[] = [];
-      for (let i = 0; i < groups.length; i++) {
-        const face = portraits[i];
-        let readId: number | null = null;
-        if (!unmistakable(face)) {
-          setStatus(`Reading name ${i + 1} of ${groups.length}…`);
-          const reads: { text: string; luma: number }[] = [];
-          for (let j = 0; j < groups[i].length; j++) {
-            const line = groups[i][j];
-            let text = await readLine(shot, line);
-            const last = j === groups[i].length - 1;
-            if (last && matchHeroName(text, heroes) === null) text = await readLine(shot, line, 8);
-            reads.push({ text, luma: line.luma });
-          }
-          readId = chooseRowHero(reads, heroes);
-        }
-        named.push({
-          id: portraitId(face, readId),
-          anchor: groups[i][0].anchor,
-          luma: groups[i][0].luma,
-        });
+      const next: Seat[] = read.slots.map((slot) => ({
+        ...slot,
+        pick: slot.state === "sure" ? slot.id : null,
+      }));
+      if (
+        read.layout === "list" &&
+        next.some((seat) => seat.state === "unsure")
+      ) {
+        await checkNames(shot, rows, next, read);
       }
-      const next = assignNamedTeams(named);
-      const found = next.yours.length + next.theirs.length;
-      if (found < 4) {
-        setStatus("The names were too unclear to fill a team. Crop closer to the scoreboard and try again.");
-        return;
-      }
-      setRead({ ...next, hits: [] });
-      const fromPictures = named.filter((row, index) => row.id !== null && unmistakable(portraits[index])).length;
-      setStatus(
-        fromPictures > 0
-          ? `Read ${found} heroes. ${fromPictures} came from the portrait next to the name, including any name the text missed. Your side is the highlighted row. Swap on the page if that is backwards.`
-          : `Read ${found} heroes from the names. Your side is the highlighted row's team. Swap on the page if that is backwards.`,
-      );
+      setSeats(next);
+      setStatus(summary(next));
     } catch {
       setStatus("Could not read that image.");
     } finally {
@@ -110,14 +77,59 @@ export function ScreenshotTeams({
     }
   }
 
+  /** On a team list, an unsure picture can be settled by the printed hero name beside it. */
+  async function checkNames(
+    shot: RgbImage,
+    rows: NameCrop[],
+    next: Seat[],
+    read: ScreenRead,
+  ) {
+    const ys = read.slots.map((slot) => slot.y ?? 0).sort((a, b) => a - b);
+    const pitch =
+      ys.length > 1
+        ? (ys[ys.length - 1] - ys[0]) / Math.max(1, ys.length - 1)
+        : 40;
+    for (const seat of next) {
+      if (seat.state !== "unsure" || seat.y === undefined) continue;
+      const lines = rows.filter(
+        (row) => Math.abs(row.y + row.h / 2 - (seat.y ?? 0)) < pitch * 0.5,
+      );
+      if (lines.length === 0) continue;
+      setStatus("Checking a printed name…");
+      const reads: { text: string; luma: number }[] = [];
+      for (const line of lines)
+        reads.push({ text: await readLine(shot, line), luma: line.luma });
+      const named = chooseRowHero(reads, heroes);
+      if (named === null) continue;
+      if (seat.choices.includes(named)) {
+        seat.pick = named;
+        seat.byName = true;
+      }
+    }
+  }
+
+  function choose(index: number, id: number | null) {
+    setSeats(
+      (current) =>
+        current?.map((seat, i) =>
+          i === index ? { ...seat, pick: id } : seat,
+        ) ?? null,
+    );
+  }
+
+  const yours = seats?.filter((seat) => seat.side === "yours") ?? [];
+  const theirs = seats?.filter((seat) => seat.side === "theirs") ?? [];
+
   return (
     <section className="rounded-card border border-line bg-surface p-4 sm:p-5">
       <h2 className="font-display text-2xl text-fg">Read a screenshot</h2>
       <p className="mt-3 max-w-2xl text-pretty text-sm text-muted">
-        Paste the scoreboard, or the team list on the pause screen. The portrait beside each name is
-        matched to the hero, and the printed name is used when that picture is not clear. A lit row
-        marks your side. The in-game top bar is skipped, because those circles follow the equipped
-        skin and are not the hero icon.
+        Paste the top bar during a match, the player list on the pause screen,
+        or the scoreboard. Each hero picture is matched to the hero. If a
+        picture is not a clear match, for example a skin that changes the look,
+        you pick that hero yourself. An empty seat stays empty. The left side of
+        the top bar, the top list on the pause screen, and the lit row on the
+        scoreboard are your side.
       </p>
       <label
         className="mt-4 flex min-h-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-card border border-dashed border-line px-4 py-4 text-center text-sm text-muted"
@@ -143,13 +155,27 @@ export function ScreenshotTeams({
           }}
         />
       </label>
-      {read && (read.yours.length > 0 || read.theirs.length > 0) ? (
+      {seats ? (
         <div className="mt-4 grid gap-3">
-          <SideLine title="Your side" ids={read.yours} byId={byId} />
-          <SideLine title="Their side" ids={read.theirs} byId={byId} />
+          <SideLine
+            title="Your side"
+            seats={yours}
+            all={seats}
+            heroes={heroes}
+            byId={byId}
+            onPick={choose}
+          />
+          <SideLine
+            title="Their side"
+            seats={theirs}
+            all={seats}
+            heroes={heroes}
+            byId={byId}
+            onPick={choose}
+          />
           <button
             type="button"
-            onClick={() => onApply(read.yours, read.theirs)}
+            onClick={() => onApply(picked(yours), picked(theirs))}
             className="min-h-11 rounded-card bg-amber px-4 text-sm font-medium text-ink"
           >
             Use these teams
@@ -160,18 +186,31 @@ export function ScreenshotTeams({
   );
 }
 
-function unmistakable(hit: FaceHit | null): boolean {
-  return hit !== null && hit.score >= 0.88 && hit.score - hit.runner >= 0.22;
+function picked(seats: Seat[]) {
+  const ids: number[] = [];
+  for (const seat of seats)
+    if (seat.pick !== null && !ids.includes(seat.pick)) ids.push(seat.pick);
+  return ids;
 }
 
-function groupRows(rows: NameCrop[]) {
-  const groups: NameCrop[][] = [];
-  for (const row of rows) {
-    const last = groups[groups.length - 1];
-    if (last && last[0].anchor === row.anchor) last.push(row);
-    else groups.push([row]);
-  }
-  return groups;
+function summary(seats: Seat[]) {
+  const sure = seats.filter((seat) => seat.state === "sure").length;
+  const byName = seats.filter((seat) => seat.byName).length;
+  const unsure = seats.filter(
+    (seat) => seat.state === "unsure" && !seat.byName,
+  ).length;
+  const missing = seats.filter((seat) => seat.state === "missing").length;
+  const parts = [`Matched ${sure} of ${seats.length} heroes by picture.`];
+  if (byName > 0) parts.push(`${byName} more from the printed name.`);
+  if (unsure > 0)
+    parts.push(
+      `${unsure} ${unsure === 1 ? "picture is" : "pictures are"} not clear, so pick ${unsure === 1 ? "that hero" : "those heroes"} below.`,
+    );
+  if (missing > 0)
+    parts.push(
+      `${missing} ${missing === 1 ? "seat is" : "seats are"} empty, likely a player who has not loaded in.`,
+    );
+  return parts.join(" ");
 }
 
 function frame() {
@@ -180,23 +219,104 @@ function frame() {
 
 function SideLine({
   title,
-  ids,
+  seats,
+  all,
+  heroes,
   byId,
+  onPick,
 }: {
   title: string;
-  ids: number[];
+  seats: Seat[];
+  all: Seat[];
+  heroes: Hero[];
   byId: Map<number, Hero>;
+  onPick: (index: number, id: number | null) => void;
 }) {
+  const sorted = [...heroes].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div>
       <p className="text-sm text-muted">{title}</p>
       <ul className="mt-1 flex flex-wrap gap-2">
-        {ids.map((id) => {
-          const hero = byId.get(id);
+        {seats.map((seat) => {
+          const index = all.indexOf(seat);
+          const key = `${seat.side}-${seat.seat}`;
+          if (seat.state === "missing") {
+            return (
+              <li
+                key={key}
+                className="flex min-h-12 items-center rounded-card border border-dashed border-line px-3 py-1 text-sm text-muted"
+              >
+                Empty seat
+              </li>
+            );
+          }
+          if (seat.state === "sure") {
+            const hero = seat.pick === null ? undefined : byId.get(seat.pick);
+            return (
+              <li
+                key={key}
+                className="flex items-center gap-2 rounded-card bg-bg px-2 py-1"
+              >
+                {seat.pick !== null ? (
+                  <HeroPortrait
+                    id={seat.pick}
+                    name={hero?.name ?? String(seat.pick)}
+                  />
+                ) : null}
+                <span className="text-sm text-fg">
+                  {hero?.name ?? seat.pick}
+                </span>
+              </li>
+            );
+          }
+          const guesses = seat.choices.filter((id) => byId.has(id));
+          const hero = seat.pick === null ? undefined : byId.get(seat.pick);
           return (
-            <li key={id} className="flex items-center gap-2 rounded-card bg-bg px-2 py-1">
-              <HeroPortrait id={id} name={hero?.name ?? String(id)} />
-              <span className="text-sm text-fg">{hero?.name ?? id}</span>
+            <li
+              key={key}
+              className="flex items-center gap-2 rounded-card border border-amber/60 bg-bg px-2 py-1"
+            >
+              {seat.pick !== null ? (
+                <HeroPortrait
+                  id={seat.pick}
+                  name={hero?.name ?? String(seat.pick)}
+                />
+              ) : null}
+              <label className="flex flex-col text-xs text-muted">
+                {seat.byName
+                  ? "From the printed name"
+                  : "Not sure, pick a hero"}
+                <select
+                  className="mt-0.5 min-h-9 rounded-card border border-line bg-surface px-2 text-sm text-fg"
+                  value={seat.pick ?? ""}
+                  onChange={(event) =>
+                    onPick(
+                      index,
+                      event.target.value === ""
+                        ? null
+                        : Number(event.target.value),
+                    )
+                  }
+                >
+                  <option value="">Leave empty</option>
+                  {guesses.length > 0 ? (
+                    <optgroup label="Closest pictures">
+                      {guesses.map((id) => (
+                        <option key={`g${id}`} value={id}>
+                          {byId.get(id)?.name ?? id}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  <optgroup label="All heroes">
+                    {sorted.map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+              </label>
             </li>
           );
         })}
@@ -215,41 +335,14 @@ function imageFile(data: DataTransfer | null): File | undefined {
   }
 }
 
-async function loadFaces(heroes: Hero[]) {
-  const loaded = await Promise.all(heroes.map((hero) => loadFace(hero.id)));
-  return loaded.filter((face): face is FaceRef => face !== null);
-}
-
-function loadFace(id: number): Promise<FaceRef | null> {
-  const cached = faceCache.get(id);
-  if (cached) return cached;
-  const pending = readFace(id);
-  faceCache.set(id, pending);
-  return pending;
-}
-
-async function readFace(id: number): Promise<FaceRef | null> {
-  const response = await fetch(heroFaceUrl(id));
-  if (!response.ok) return null;
-  const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) {
-    bitmap.close();
-    return null;
-  }
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  return indexFace(id, { w: canvas.width, h: canvas.height, data: pixels.data });
-}
-
+/** The reader is tuned on 1080-pixel-tall screens, so a full-screen shot is scaled to that height first. */
 async function loadShot(file: File): Promise<RgbImage> {
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
+  const aspect = bitmap.width / bitmap.height;
+  const fullScreen = aspect >= 1.25 && aspect <= 2.5;
+  const scale = fullScreen
+    ? 1080 / bitmap.height
+    : Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
   const w = Math.max(1, Math.round(bitmap.width * scale));
   const h = Math.max(1, Math.round(bitmap.height * scale));
   const canvas = document.createElement("canvas");
@@ -257,6 +350,7 @@ async function loadShot(file: File): Promise<RgbImage> {
   canvas.height = h;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("canvas");
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(bitmap, 0, 0, w, h);
   bitmap.close();
   const pixels = ctx.getImageData(0, 0, w, h);
@@ -284,7 +378,8 @@ function lineCanvas(shot: RgbImage, row: NameCrop, scale = 5) {
   for (let y = 0; y < row.h; y++) {
     for (let x = 0; x < row.w; x++) {
       const from = ((row.y + y) * shot.w + row.x + x) * 4;
-      const luma = (shot.data[from] + shot.data[from + 1] + shot.data[from + 2]) / 3;
+      const luma =
+        (shot.data[from] + shot.data[from + 1] + shot.data[from + 2]) / 3;
       samples.push(luma);
       if (luma < lo) lo = luma;
       if (luma > hi) hi = luma;
@@ -310,7 +405,9 @@ function lineCanvas(shot: RgbImage, row: NameCrop, scale = 5) {
   return canvas;
 }
 
-type Reader = { recognize: (image: HTMLCanvasElement) => Promise<{ data: { text: string } }> };
+type Reader = {
+  recognize: (image: HTMLCanvasElement) => Promise<{ data: { text: string } }>;
+};
 
 let reader: Promise<Reader> | null = null;
 
@@ -320,7 +417,8 @@ function names() {
     await worker.setParameters({
       tessedit_pageseg_mode: PSM.SINGLE_LINE,
       user_defined_dpi: "300",
-      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz &",
+      tessedit_char_whitelist:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz &",
     });
     return worker;
   });
