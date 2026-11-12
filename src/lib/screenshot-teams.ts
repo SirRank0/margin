@@ -13,6 +13,12 @@ export type PortraitIcon = { id: number; image: RgbImage };
 
 type Prepared = { id: number; grid: Float32Array };
 
+/** Public portrait file, under Vite's base path ("/" locally, "/margin/" on Pages). */
+export function heroFaceUrl(id: number, base: string = import.meta.env.BASE_URL ?? "/"): string {
+  const prefix = base.endsWith("/") ? base : `${base}/`;
+  return `${prefix}heroes/${id}.webp`;
+}
+
 export function prepareIcons(icons: PortraitIcon[]): Prepared[] {
   const prepared: Prepared[] = [];
   for (const icon of icons) {
@@ -681,7 +687,8 @@ function clean(value: string) {
     .replace(/&/g, " ")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/^the /, "");
 }
 
 function editDistance(left: string, right: string) {

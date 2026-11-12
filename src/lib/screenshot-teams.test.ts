@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { HEROES } from "./deadlock/heroes.ts";
-import { assignNamedTeams, chooseRowHero, findHeroNameRows, indexFace, matchFace, matchHeroName, portraitId, readTeams, type RgbImage } from "./screenshot-teams.ts";
+import { assignNamedTeams, chooseRowHero, findHeroNameRows, heroFaceUrl, indexFace, matchFace, matchHeroName, portraitId, readTeams, type RgbImage } from "./screenshot-teams.ts";
 
 function image(w: number, h: number, paint: (x: number, y: number) => [number, number, number]): RgbImage {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -203,4 +203,18 @@ test("a painted icon matches itself and not the other icon", () => {
   assert.ok(hit);
   assert.equal(hit.id, 4);
   assert.ok(hit.score - hit.runner >= 0.22);
+});
+
+test("Doorman matches The Doorman, including a dropped leading The", () => {
+  const id = HEROES.find((hero) => hero.name === "The Doorman")?.id;
+  assert.equal(id, 69);
+  for (const line of ["The Doorman", "Doorman", "the doorman", "Doorman Level", "Doorman (A", "he Doorman", "T Doorman"]) {
+    assert.equal(matchHeroName(line, HEROES), 69, line);
+  }
+});
+
+test("portrait icon URLs work locally and under the Pages base path", () => {
+  assert.equal(heroFaceUrl(69, "/"), "/heroes/69.webp");
+  assert.equal(heroFaceUrl(69, "/margin/"), "/margin/heroes/69.webp");
+  assert.equal(heroFaceUrl(69, "/margin"), "/margin/heroes/69.webp");
 });

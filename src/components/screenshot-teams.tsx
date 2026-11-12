@@ -4,6 +4,7 @@ import {
   assignNamedTeams,
   chooseRowHero,
   findHeroNameRows,
+  heroFaceUrl,
   indexFace,
   matchHeroName,
   portraitId,
@@ -228,7 +229,7 @@ function loadFace(id: number): Promise<FaceRef | null> {
 }
 
 async function readFace(id: number): Promise<FaceRef | null> {
-  const response = await fetch(`/heroes/${id}.webp`);
+  const response = await fetch(heroFaceUrl(id));
   if (!response.ok) return null;
   const blob = await response.blob();
   const bitmap = await createImageBitmap(blob);
