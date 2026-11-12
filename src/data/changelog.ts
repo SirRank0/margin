@@ -14,6 +14,11 @@ export type ChangelogEntry = {
 export const changelog: ChangelogEntry[] = [
   {
     date: "2026-11-11",
+    text: "Matches with no recorded winner are no longer counted as losses in matchup and street records.",
+    link: "https://github.com/SirRank0/margin/pull/19",
+  },
+  {
+    date: "2026-11-11",
     text: "The Comp odds explainer now matches how ability order actually works, and The Doorman is named the same way on every tab.",
     link: "https://github.com/SirRank0/margin/pull/17",
   },

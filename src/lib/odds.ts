@@ -93,6 +93,39 @@ export function winRate(wins: number, matches: number) {
   return wins / matches;
 }
 
+/**
+ * Games with a recorded winner on either side. When both directions of a
+ * matchup or street are present, matches with no recorded winner (abandoned
+ * or incomplete) are left out of the count, so they are not treated as losses
+ * for both sides. A one-sided record is left alone.
+ */
+export function countedMatches(wins: number, reverseWins: number, matches: number) {
+  const scored = wins + reverseWins;
+  if (scored >= 0 && scored <= matches) return scored;
+  return matches;
+}
+
+function countersWithCountedMatches(rows: CounterStat[]): CounterStat[] {
+  const byKey = new Map(rows.map((row) => [`${row.hero}>${row.enemy}`, row]));
+  return rows.map((row) => {
+    const reverse = byKey.get(`${row.enemy}>${row.hero}`);
+    if (!reverse) return row;
+    const matches = countedMatches(row.wins, reverse.wins, row.matches);
+    return matches === row.matches ? row : { ...row, matches };
+  });
+}
+
+function lanesWithCountedMatches(rows: LaneStat[]): LaneStat[] {
+  const key = (row: LaneStat) => `${row.a},${row.b}|${row.c},${row.d}`;
+  const byKey = new Map(rows.map((row) => [key(row), row]));
+  return rows.map((row) => {
+    const reverse = byKey.get(`${row.c},${row.d}|${row.a},${row.b}`);
+    if (!reverse) return row;
+    const matches = countedMatches(row.wins, reverse.wins, row.matches);
+    return matches === row.matches ? row : { ...row, matches };
+  });
+}
+
 export function logit(p: number) {
   const x = Math.min(1 - 1e-6, Math.max(1e-6, p));
   return Math.log(x / (1 - x));
@@ -297,6 +330,8 @@ export function scoreLobby(
   laneAssignments: LaneAssignment[] = [],
 ): Score {
   const { heroes, center, heroPost } = fitHeroes(meta);
+  const counters = countersWithCountedMatches(meta.counters ?? []);
+  const lanes = lanesWithCountedMatches(meta.lanes ?? []);
 
   const pairObs: Obs[] = [];
   const pairIndex: { key: string; y: number; v: number }[] = [];
@@ -329,7 +364,7 @@ export function scoreLobby(
   const counterObs: Obs[] = [];
   const counterIndex: { key: string; y: number; v: number }[] = [];
   const counterRecord = new Map<string, { observed: number; predicted: number; matches: number }>();
-  for (const row of meta.counters ?? []) {
+  for (const row of counters) {
     const ally = heroPost.get(row.hero);
     const enemy = heroPost.get(row.enemy);
     if (!ally || !enemy || row.matches <= 0 || row.hero === row.enemy) continue;
@@ -376,7 +411,7 @@ export function scoreLobby(
     `${pairKey(a, b)}|${pairKey(c, d)}`;
   const laneIndex: { key: string; y: number; v: number }[] = [];
   const laneRecord = new Map<string, { observed: number; predicted: number; matches: number }>();
-  for (const row of meta.lanes ?? []) {
+  for (const row of lanes) {
     const ta = heroPost.get(row.a);
     const tb = heroPost.get(row.b);
     const tc = heroPost.get(row.c);

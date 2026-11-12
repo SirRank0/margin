@@ -72,6 +72,39 @@ LANE_MIN = 30
 # rather than mixing all-ranks streets with rank-specific strengths.
 
 
+def counted_matches(wins, reverse_wins, matches):
+    scored = wins + reverse_wins
+    if 0 <= scored <= matches:
+        return scored
+    return matches
+
+
+def drop_unscored_counters(rows):
+    by_key = {(row["hero"], row["enemy"]): row for row in rows}
+    out = []
+    for row in rows:
+        reverse = by_key.get((row["enemy"], row["hero"]))
+        if reverse is None:
+            out.append(row)
+            continue
+        matches = counted_matches(row["wins"], reverse["wins"], row["matches"])
+        out.append(row if matches == row["matches"] else {**row, "matches": matches})
+    return [row for row in out if row["matches"] > 0]
+
+
+def drop_unscored_lanes(rows):
+    by_key = {(row["a"], row["b"], row["c"], row["d"]): row for row in rows}
+    out = []
+    for row in rows:
+        reverse = by_key.get((row["c"], row["d"], row["a"], row["b"]))
+        if reverse is None:
+            out.append(row)
+            continue
+        matches = counted_matches(row["wins"], reverse["wins"], row["matches"])
+        out.append(row if matches == row["matches"] else {**row, "matches": matches})
+    return [row for row in out if row["matches"] > 0]
+
+
 def parse_lanes(rows):
     lanes = []
     for row in rows:
@@ -89,7 +122,7 @@ def parse_lanes(rows):
                 "matches": int(row["matches_played"]),
             }
         )
-    return lanes
+    return drop_unscored_lanes(lanes)
 
 
 def slice_meta(heroes, pairs, items, names, counters=None):
@@ -137,6 +170,7 @@ def slice_meta(heroes, pairs, items, names, counters=None):
                 "matches": matches,
             }
         )
+    counter_rows = drop_unscored_counters(counter_rows)
     item_rows = []
     for row in items:
         name = ITEMS.get(row["item_id"])
