@@ -2,6 +2,9 @@ name: Deploy to GitHub Pages
 
 on:
   workflow_dispatch:
+  schedule:
+    # Daily refresh of match stats and shop items, 11:00 UTC (5 AM Central in winter)
+    - cron: "0 11 * * *"
   push:
     branches:
       - main
