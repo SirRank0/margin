@@ -15,6 +15,7 @@ export const changelog: ChangelogEntry[] = [
   {
     date: "2026-11-11",
     text: "The Comp odds explainer now matches how ability order actually works, and The Doorman is named the same way on every tab.",
+    link: "https://github.com/SirRank0/margin/pull/17",
   },
   {
     date: "2026-11-11",
