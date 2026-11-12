@@ -12,7 +12,7 @@ export const HEROES: Hero[] = [
   { id: 72, name: "Billy", released: true },
   { id: 16, name: "Calico", released: true },
   { id: 81, name: "Celeste", released: true },
-  { id: 69, name: "Doorman", released: true },
+  { id: 69, name: "The Doorman", released: true },
   { id: 64, name: "Drifter", released: true },
   { id: 11, name: "Dynamo", released: true },
   { id: 76, name: "Graves", released: true },

@@ -1,0 +1,25 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-pages/
+.output/
+.vercel/
+.nitro/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Logs and coverage
+*.log
+coverage/
+
+# OS and editor
+.DS_Store
+*.swp
+.idea/
