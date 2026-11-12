@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { scoreLobby, sigmoid, logit, wilson, heroRates, rankSample, HERO_THIN_MATCHES, LANE_PRIOR_K, type MarginMeta } from "./odds.ts";
-import { rankSlices } from "../data/margin-ranks.ts";
 
 function meta(
   heroes: MarginMeta["heroes"],
@@ -296,44 +295,78 @@ test("a 200-game floor marks thin heroes, and a band is thin when its median her
   assert.equal(rankSample([{ matches: 423 }, { matches: 500 }, { matches: 600 }]).thin, false);
 });
 
-test("live rank cards shrink thin Eternus and Initiate records toward the field", () => {
-  const eternus = rankSlices.find((row) => row.id === "eternus");
-  const initiate = rankSlices.find((row) => row.id === "initiate");
-  const all = rankSlices.find((row) => row.id === "all");
-  assert.ok(eternus && initiate && all);
+function evenField(matches: number, count = 20): MarginMeta["heroes"] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: 10 + i,
+    name: `Field ${i}`,
+    wins: matches / 2,
+    matches,
+  }));
+}
 
-  const eternusSample = rankSample(eternus.meta.heroes);
-  assert.ok(eternusSample.medianMatches < HERO_THIN_MATCHES);
-  assert.ok(eternusSample.thin);
-  assert.ok(!rankSample(initiate.meta.heroes).thin);
-  assert.ok(!rankSample(all.meta.heroes).thin);
+/** A split field so the model can see real spread, not only noise. */
+function splitField(matches: number): MarginMeta["heroes"] {
+  return Array.from({ length: 20 }, (_, i) => ({
+    id: 10 + i,
+    name: `Field ${i}`,
+    wins: i < 10 ? matches * 0.6 : matches * 0.4,
+    matches,
+  }));
+}
 
-  const eternusRates = heroRates(eternus.meta);
-  const sinclair = eternus.meta.heroes.find((hero) => hero.name === "Sinclair");
-  const haze = eternus.meta.heroes.find((hero) => hero.name === "Haze");
-  assert.ok(sinclair && haze);
-  const sinclairRate = eternusRates.get(sinclair.id);
-  const hazeRate = eternusRates.get(haze.id);
-  assert.ok(sinclairRate && hazeRate);
-  assert.equal(sinclairRate.wins, 4);
-  assert.equal(sinclairRate.matches, 11);
-  assert.ok(sinclairRate.thin);
-  assert.ok(Math.abs(sinclairRate.raw - 4 / 11) < 1e-12);
-  assert.ok(Math.abs(sinclairRate.model - scoreLobby(eternus.meta, [sinclair.id], []).probability) < 1e-12);
-  assert.ok(Math.abs(sinclairRate.model - 0.5) < Math.abs(sinclairRate.raw - 0.5));
-  assert.ok(hazeRate.thin);
-  assert.equal(hazeRate.matches, 170);
-  assert.ok(Math.abs(hazeRate.model - scoreLobby(eternus.meta, [haze.id], []).probability) < 1e-12);
-  assert.ok(Math.abs(hazeRate.model - 0.5) < Math.abs(hazeRate.raw - 0.5) + 1e-12);
+function assertShrunkTowardField(data: MarginMeta, id: number, expectThin: boolean) {
+  const hero = data.heroes.find((row) => row.id === id);
+  const rate = heroRates(data).get(id);
+  assert.ok(hero && rate);
+  assert.equal(rate.wins, hero.wins);
+  assert.equal(rate.matches, hero.matches);
+  assert.equal(rate.raw, hero.wins / hero.matches);
+  assert.equal(rate.thin, expectThin);
+  assert.equal(rate.thin, hero.matches < HERO_THIN_MATCHES);
+  const alone = scoreLobby(data, [id], []).probability;
+  assert.ok(Math.abs(rate.model - alone) < 1e-12);
+  const field = 0.5;
+  const lo = Math.min(rate.raw, field);
+  const hi = Math.max(rate.raw, field);
+  assert.ok(
+    rate.model >= lo - 1e-12 && rate.model <= hi + 1e-12,
+    "headline sits between the raw rate and the field",
+  );
+  assert.ok(Math.abs(rate.model - field) <= Math.abs(rate.raw - field) + 1e-12);
+}
 
-  const initiateRates = heroRates(initiate.meta);
-  const solomon = initiate.meta.heroes.find((hero) => hero.name === "Solomon");
-  assert.ok(solomon);
-  const solomonRate = initiateRates.get(solomon.id);
-  assert.ok(solomonRate);
-  assert.equal(solomonRate.wins, 53);
-  assert.equal(solomonRate.matches, 125);
-  assert.ok(solomonRate.thin);
-  assert.ok(Math.abs(solomonRate.model - scoreLobby(initiate.meta, [solomon.id], []).probability) < 1e-12);
-  assert.ok(Math.abs(solomonRate.model - 0.5) < Math.abs(solomonRate.raw - 0.5));
+test("thin rank cards shrink toward the field, whether or not the band itself is thin", () => {
+  // An Eternus-like band: the median hero is well under the 200-game floor.
+  // With no detectable spread, short records are pulled all the way to average.
+  const thinBand = meta([
+    { id: 1, name: "Streak", wins: 4, matches: 11 },
+    { id: 2, name: "Popular", wins: 90, matches: 170 },
+    ...evenField(64),
+  ]);
+  const thinSample = rankSample(thinBand.heroes);
+  assert.ok(thinSample.medianMatches < HERO_THIN_MATCHES);
+  assert.ok(thinSample.thin);
+  assertShrunkTowardField(thinBand, 1, true);
+  assertShrunkTowardField(thinBand, 2, true);
+  const streak = heroRates(thinBand).get(1);
+  assert.ok(streak);
+  assert.ok(Math.abs(streak.model - 0.5) < 0.02);
+
+  // An Initiate-like band: the median hero is well above the floor, but a
+  // short record on that band is still marked thin and pulled toward average.
+  const thickBand = meta([
+    { id: 3, name: "New", wins: 53, matches: 125 },
+    ...splitField(800),
+  ]);
+  const thickSample = rankSample(thickBand.heroes);
+  assert.ok(thickSample.medianMatches >= HERO_THIN_MATCHES);
+  assert.ok(!thickSample.thin);
+  assertShrunkTowardField(thickBand, 3, true);
+  const newRate = heroRates(thickBand).get(3);
+  assert.ok(newRate);
+  assert.ok(newRate.model !== newRate.raw);
+  const established = heroRates(thickBand).get(10);
+  assert.ok(established);
+  assert.ok(!established.thin);
+  assert.ok(Math.abs(established.model - established.raw) < 0.01);
 });

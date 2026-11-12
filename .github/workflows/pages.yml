@@ -26,6 +26,7 @@ jobs:
       - run: npm install
       - run: python3 scripts/fetch-rank-slices.py
       - run: python3 scripts/fetch-ability-orders.py
+      - run: python3 scripts/build_shop_items.py
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:pages
