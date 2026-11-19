@@ -13,6 +13,11 @@ export type ChangelogEntry = {
 
 export const changelog: ChangelogEntry[] = [
   {
+    date: "2026-11-19",
+    text: "A new Heatmap tab shows where heroes kill and die in ranked games from the last 30 days. You can look at all heroes or one hero, and switch between kills, deaths, and the kill/death ratio. Spots with only a handful of fights are hidden on the ratio view.",
+    link: "https://github.com/SirRank0/margin/pull/28",
+  },
+  {
     date: "2026-11-12",
     text: "Read a screenshot now recognizes heroes by their picture on the in-game top bar, the pause-screen player list, and the scoreboard. A picture it is not sure about, such as a skin that changes the look, is left for you to pick, and an empty seat stays empty.",
     link: "https://github.com/SirRank0/margin/pull/26",
