@@ -53,5 +53,5 @@ export const heatmapWindow = {
     87,
     88
   ],
-  "fetchedAt": "2026-11-19T12:53:42Z"
+  "fetchedAt": "2026-11-19T19:33:40Z"
 } as const;
