@@ -6,6 +6,7 @@ import { BuildEditor } from "@/components/build-editor";
 import { LaneAnalyzer } from "@/components/lane-analyzer";
 import { HeroPortrait } from "@/components/hero-portrait";
 import { ScreenshotTeams } from "@/components/screenshot-teams";
+import { HeatmapSection } from "@/components/heatmap";
 import { scoreLobby, wilson, heroRates, rankSample, type Score, type ScorePart } from "@/lib/odds";
 import { compareHeroNames, compareHeroSearch, heroSearchRank } from "@/lib/hero-order";
 import { dataWindow } from "@/data/data-window";
@@ -21,6 +22,7 @@ const TABS = [
   { id: "lane", label: "Lane" },
   { id: "builder", label: "Builder" },
   { id: "courier", label: "Build courier" },
+  { id: "heatmap", label: "Heatmap" },
   { id: "changelog", label: "What's new" },
 ] as const;
 
@@ -89,6 +91,11 @@ export function MarginBoard() {
       {tab === "builder" ? (
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
           <BuildEditor />
+        </main>
+      ) : null}
+      {tab === "heatmap" ? (
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+          <HeatmapSection />
         </main>
       ) : null}
       {tab === "changelog" ? (
