@@ -1,9 +1,9 @@
 // Date range and hero list for the heatmap grids in public/heatmaps/.
 // The board loads those JSON files on demand and does not call the API.
 export const heatmapWindow = {
-  "since": "2026-10-20",
-  "until": "2026-11-19",
-  "label": "Ranked games from October 20, 2026 to November 19, 2026",
+  "since": "2026-10-21",
+  "until": "2026-11-20",
+  "label": "Ranked games from October 21, 2026 to November 20, 2026",
   "matchMode": "ranked",
   "radius": 10752,
   "cell": 128,
@@ -29,7 +29,6 @@ export const heatmapWindow = {
     25,
     27,
     31,
-    35,
     50,
     52,
     58,
@@ -53,5 +52,5 @@ export const heatmapWindow = {
     87,
     88
   ],
-  "fetchedAt": "2026-11-19T19:33:40Z"
+  "fetchedAt": "2026-11-20T19:11:23Z"
 } as const;
