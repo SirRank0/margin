@@ -5,12 +5,18 @@ hero) and a small window file the board imports. The page loads the grids on
 demand and does not call the API. Requests run one at a time; 503s are retried
 with backoff. Off-map and junk cells are dropped, and the two teams are merged
 in each cell.
+
+The whole fetch has a time budget (HEATMAP_BUDGET_MIN, default 45 minutes) so a
+slow or failing API cannot push the daily job into GitHub's 6-hour limit and
+lose the rest of the day's data. Any grid that fails or runs out of time keeps
+the file from the previous run instead of disappearing from the page.
 """
 
 from __future__ import annotations
 
 import http.client
 import json
+import os
 import re
 import time
 import urllib.error
@@ -30,6 +36,12 @@ CELL = 128
 USER_AGENT = "margin/0.1"
 TIMEOUT_S = 180
 ATTEMPTS = 6
+BUDGET_S = float(os.environ.get("HEATMAP_BUDGET_MIN", "45")) * 60
+DEADLINE = time.monotonic() + BUDGET_S
+
+
+def time_left() -> float:
+    return DEADLINE - time.monotonic()
 
 
 def hero_ids() -> list[int]:
@@ -75,12 +87,15 @@ def get(path: str, params: dict | None = None) -> object:
     last_error: Exception | None = None
     for attempt in range(ATTEMPTS):
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+            if time_left() <= 0:
+                raise TimeoutError("heatmap time budget used up")
+            timeout = max(10, min(TIMEOUT_S, time_left()))
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.load(resp)
         except Exception as exc:
             last_error = exc
             wait = retry_wait(exc, delay)
-            if wait is None or attempt == ATTEMPTS - 1:
+            if wait is None or attempt == ATTEMPTS - 1 or wait >= time_left():
                 raise
             print(f"{exc} on {path}; retry in {wait}s (attempt {attempt + 1}/{ATTEMPTS})")
             time.sleep(wait)
@@ -149,18 +164,23 @@ def main() -> None:
     }
     ids = hero_ids()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for old in OUT_DIR.glob("*.json"):
-        old.unlink()
-
-    print("fetch all heroes", label)
-    cells, kills, deaths = fetch_grid(base)
-    write_grid(OUT_DIR / "all.json", cells, kills, deaths)
-    print(f"all  cells {len(cells):5}  kills {kills}  deaths {deaths}  bytes {(OUT_DIR / 'all.json').stat().st_size}")
+    print("fetch all heroes", label, f"budget {BUDGET_S / 60:.0f} min")
+    try:
+        cells, kills, deaths = fetch_grid(base)
+        write_grid(OUT_DIR / "all.json", cells, kills, deaths)
+        print(f"all  cells {len(cells):5}  kills {kills}  deaths {deaths}  bytes {(OUT_DIR / 'all.json').stat().st_size}")
+    except Exception as exc:
+        if not (OUT_DIR / "all.json").exists():
+            raise
+        print(f"keep previous all-heroes grid: {exc}")
 
     kept: list[int] = []
     skipped: list[int] = []
 
     def write_hero(hero_id: int) -> bool:
+        if time_left() <= 0:
+            print(f"skip hero {hero_id}: time budget used up")
+            return False
         print(f"fetch hero {hero_id}")
         try:
             hero_cells, hero_kills, hero_deaths = fetch_grid({**base, "hero_ids": hero_id})
@@ -177,7 +197,7 @@ def main() -> None:
             kept.append(hero_id)
         else:
             skipped.append(hero_id)
-    if skipped:
+    if skipped and time_left() > 120:
         print(f"retrying {len(skipped)} skipped heroes after a pause")
         time.sleep(90)
         still: list[int] = []
@@ -187,9 +207,19 @@ def main() -> None:
             else:
                 still.append(hero_id)
         skipped = still
-        if skipped:
-            print("still missing heroes", skipped)
+    if skipped:
+        stale = [h for h in skipped if (OUT_DIR / f"{h}.json").exists()]
+        if stale:
+            print("keeping previous grids for heroes", stale)
+            kept.extend(stale)
+        missing = [h for h in skipped if h not in stale]
+        if missing:
+            print("still missing heroes", missing)
     kept.sort()
+    wanted = {"all.json", *(f"{h}.json" for h in kept)}
+    for old in OUT_DIR.glob("*.json"):
+        if old.name not in wanted:
+            old.unlink()
 
     window = {
         "since": start.strftime("%Y-%m-%d"),
