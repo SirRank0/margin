@@ -1159,7 +1159,7 @@ export const shopItems: ShopItem[] = [
         "v": "+38%",
         "icon": "https://assets-bucket.deadlock-api.com/assets-api-res/icons/icons/properties/damage_bullet_color.svg",
         "sc": {
-          "v": 1.24,
+          "v": 1.12,
           "t": "boon"
         }
       },
@@ -1491,7 +1491,7 @@ export const shopItems: ShopItem[] = [
     "innate": [
       {
         "n": "Weapon Fall-off Range",
-        "v": "+20%",
+        "v": "+18%",
         "icon": "https://assets-bucket.deadlock-api.com/assets-api-res/icons/icons/properties/range.svg"
       },
       {
@@ -1776,7 +1776,7 @@ export const shopItems: ShopItem[] = [
     "effects": [
       {
         "n": "Shock Damage",
-        "v": "43",
+        "v": "37",
         "icon": "https://assets-bucket.deadlock-api.com/assets-api-res/icons/icons/properties/damage_magic_color.svg",
         "sc": {
           "v": 0.19,
@@ -3264,7 +3264,7 @@ export const shopItems: ShopItem[] = [
       }
     ],
     "from": [],
-    "cooldown": "45s"
+    "cooldown": "52s"
   },
   {
     "id": 3585132399,
@@ -3384,7 +3384,7 @@ export const shopItems: ShopItem[] = [
         "v": "325",
         "icon": "https://assets-bucket.deadlock-api.com/assets-api-res/icons/icons/properties/heal.svg",
         "sc": {
-          "v": 1.1,
+          "v": 1.25,
           "t": "spirit"
         }
       },
@@ -3766,7 +3766,7 @@ export const shopItems: ShopItem[] = [
       }
     ],
     "from": [],
-    "cooldown": "90s"
+    "cooldown": "105s"
   },
   {
     "id": 2407781327,
@@ -4551,7 +4551,7 @@ export const shopItems: ShopItem[] = [
     "active": false,
     "cast": "passive",
     "image": "https://assets-bucket.deadlock-api.com/assets-api-res/images/items/brawl/cloak_of_opportunity.webp",
-    "body": "Block the next debuff that would apply <span class=\"highlight\">movement lock, Stun, Chained, Immobilize, or Sleep</span> and become <span class=\"highlight\">Unstoppable</span>. Also gain a <span class=\"highlight\">Barrier</span> and bonus\n<span class=\"inline-attribute-label MoveSpeed\" style=\"color: #0F9;\">move speed</span>",
+    "body": "Block the next debuff that would apply <span class=\"highlight\">movement lock, Stun, Chained, Immobilize, Sleep, or Fear</span> and become <span class=\"highlight\">Unstoppable</span>. Also gain a <span class=\"highlight\">Barrier</span> and bonus\n<span class=\"inline-attribute-label MoveSpeed\" style=\"color: #0F9;\">move speed</span>",
     "innate": [],
     "effects": [
       {
@@ -6561,7 +6561,7 @@ export const shopItems: ShopItem[] = [
       },
       {
         "n": "Debuff Duration",
-        "v": "8s",
+        "v": "7s",
         "icon": "https://assets-bucket.deadlock-api.com/assets-api-res/icons/icons/properties/damage_magic_color.svg"
       },
       {
